@@ -193,22 +193,53 @@ export default function Rail() {
           borderRight: "1px solid var(--hairline)",
         }}
       >
-        <div className="flex items-start justify-between gap-2 px-4 pb-6 pt-6">
+        {/*
+          Collapsed, the mark and the toggle stack; expanded, they sit on one
+          row. This is a layout problem, not a glyph problem, and it took two
+          attempts to see that: at 68px wide with 16px of padding either side
+          there are 36px of content, the toggle takes 25 of them, and flex left
+          the wordmark about three pixels. Whatever character went in there was
+          going to render as a sliver.
+        */}
+        <div
+          className={`flex px-4 pb-6 pt-6 ${
+            collapsed
+              ? "flex-col items-center gap-4"
+              : "flex-row items-start justify-between gap-2"
+          }`}
+        >
           <Link
             href="/"
-            className="block min-w-0 overflow-hidden"
+            aria-label="Nyaya — home"
+            className={collapsed ? "block" : "block min-w-0 overflow-hidden"}
             style={{ textDecoration: "none", color: "inherit" }}
           >
+            {/*
+              Collapsed, the wordmark is a mark rather than a truncation.
+
+              It used to render "न्या" - the first two syllables of न्याय with
+              the third cut off - which is not an abbreviation, it is a word
+              with its end missing, and it looked like a rendering fault. The
+              full name is also still laid out underneath at 236px while the
+              rail is 68px wide, so any of it that escaped `overflow: hidden`
+              showed as a sliver of clipped text.
+
+              The replacement has to be a complete letter. "न्" carries a
+              virama, which makes it a half-form that does not stand on its own
+              - it renders as a bare vertical stroke and reads as another
+              artefact. "न" is the whole first letter of न्याय and is legible
+              alone.
+            */}
             <div
               style={{
-                fontSize: collapsed ? "1rem" : "1.25rem",
+                fontSize: collapsed ? "1.375rem" : "1.25rem",
                 fontWeight: 600,
                 letterSpacing: "-0.03em",
                 lineHeight: 1,
-                transition: "font-size 0.2s",
+                whiteSpace: "nowrap",
               }}
             >
-              {collapsed ? "न्या" : "Nyaya"}
+              {collapsed ? "न" : "Nyaya"}
             </div>
             <AnimatePresence initial={false}>
               {!collapsed && (
