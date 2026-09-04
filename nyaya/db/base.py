@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import enum
 import uuid
 from datetime import UTC, datetime
 from typing import Any, ClassVar
 
-from sqlalchemy import DateTime, MetaData, func
+from sqlalchemy import DateTime, MetaData, String, TypeDecorator, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -25,6 +26,42 @@ NAMING_CONVENTION = {
     "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
     "pk": "pk_%(table_name)s",
 }
+
+
+class StrEnumType(TypeDecorator):
+    """Store a `StrEnum` as text and return it as the enum member.
+
+    Without this, a `Mapped[ApprovalStatus]` column stores correctly but loads as
+    a plain `str`, so the type annotation is a lie and any caller reaching for
+    `.value` on a loaded row raises `AttributeError`. The failure is silent until
+    the exact line that touches it runs, which in this codebase would be a
+    compliance decision path.
+
+    `StrEnum` members compare equal to their string form, so equality checks kept
+    working and hid the problem - the crash only appears on attribute access.
+    """
+
+    impl = String
+    cache_ok = True
+
+    def __init__(self, enum_class: type[enum.StrEnum], length: int = 32) -> None:
+        self.enum_class = enum_class
+        super().__init__(length=length)
+
+    def process_bind_param(self, value: Any, dialect: Any) -> str | None:
+        if value is None:
+            return None
+        return value.value if isinstance(value, enum.Enum) else str(value)
+
+    def process_result_value(self, value: Any, dialect: Any) -> Any:
+        if value is None:
+            return None
+        try:
+            return self.enum_class(value)
+        except ValueError:
+            # A value written before the vocabulary changed. Returned as-is
+            # rather than raising, so a historical record stays readable.
+            return value
 
 
 class Base(DeclarativeBase):

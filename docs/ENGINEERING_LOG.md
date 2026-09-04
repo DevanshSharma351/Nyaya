@@ -1407,3 +1407,100 @@ numbers are optimistic; a held-out set is needed before quoting them as
 performance.
 
 **State: 183 tests passing, ruff clean, mypy clean across 60 source files.**
+
+---
+
+## 2026-09-04 — Next phase: orchestration, gates, persistence, change impact
+
+With the agents measured individually, this phase makes them a system.
+
+### The workflow graph
+
+```
+ingest -> extract -> [gate: requirement_baseline]
+       -> map_compliance -> [gate: regulatory_interpretation]
+       -> assess_coverage -> [gate: compliance_gap]
+       -> recommend_sdlc -> [gate: sdlc_selection] -> persist
+```
+
+A state graph, not a swarm. This is where the LangGraph decision recorded at the
+start of the project earns itself: execution order is explicit, every transition
+is checkpointed, and the approval gates are `interrupt` points that **suspend the
+run durably** rather than prompting inline.
+
+The distinction matters. With a checkpointer, "resume" can mean days later, in a
+different process, after a compliance officer has read the evidence. Verified by
+test: a run suspended by one compiled handle is resumed by a **separate handle**
+over the same store. That is the difference between a gate and a prompt.
+
+### Gates enforce competence, not just consent
+
+Each of the six gates declares which stakeholder roles may clear it. A product
+owner cannot sign off a regulatory interpretation - the authority rests with
+compliance or legal - and encoding that here makes it a property of the workflow
+rather than a convention someone remembers.
+
+**A rejection halts the run.** A gate whose refusal is noted and then ignored is
+not a gate; there is a test asserting the pipeline never reaches the SDLC
+recommendation after a rejected baseline.
+
+Decisions **accumulate** rather than replace, so the record shows every decision
+a reviewer made, not only the last.
+
+### SDLC factors are derived, not asked for
+
+`_derive_factors` computes the decision vector from what the pipeline actually
+found - the share of requirements that are regulatory, that are security, that
+carry elevated risk, and how many open questions remain. A factor vector supplied
+by hand is a conclusion dressed as an input; deriving it means the lifecycle
+recommendation is traceable to evidence like everything else here.
+
+### Regulatory-change impact analysis
+
+The capability the clause-level, version-by-supersession design was built for.
+When a regulator amends a clause, "which of our requirements are now wrong" is a
+**graph walk**, not a re-read of the specification.
+
+Three severities, because they demand different responses:
+
+| finding | meaning |
+|---|---|
+| `stale` | the cited clause was amended; the requirement may still be correct but must be re-verified |
+| `orphaned` | the cited clause no longer exists; the requirement has lost its authority |
+| control losing authority | a control whose supporting clause is gone must stop counting as covered |
+
+Tested against a real amendment: a modified sub-clause is detected, its unchanged
+sibling is **not** reported, a deleted clause orphans the requirement citing it,
+and an unaffected requirement stays out of the report. There is also a test that
+**re-wrapped text is not reported as an amendment** - reporting formatting as
+change would flood the report and train reviewers to skim it.
+
+### Bug found: enum columns were loading as plain strings
+
+`Mapped[ApprovalStatus]` stored correctly and returned `str`. The type annotation
+was a lie, and any caller reaching for `.value` on a loaded row raised
+`AttributeError` — confirmed by reproduction, on a compliance decision path.
+
+**Why it survived this long:** `StrEnum` members compare equal to their string
+form, so every equality check in the codebase kept passing. The defect appears
+only on *attribute access*, which no test had exercised until persistence
+round-tripped a row.
+
+Fixed with a `StrEnumType` decorator applied to all 15 enum columns, so the
+annotations are now honest. It returns an unrecognised value as-is rather than
+raising, so a record written before a vocabulary change stays readable.
+
+Worth noting the pattern: this is the second defect this project has produced by
+**two representations of the same thing quietly disagreeing** - the first was the
+double sigmoid. Both were invisible to tests and found only when something forced
+the two representations into contact.
+
+### Persistence
+
+A requirement is never written without its provenance edges. Rejected and
+unconfirmed citations are persisted too: an unresolvable citation is a *finding*,
+and discarding it would erase the evidence that the model proposed something
+unfounded. Approval status reflects what humans actually decided - a halted run
+persists DRAFT rather than silently baselining work a reviewer declined.
+
+**State: 208 tests passing, ruff clean, mypy clean across 66 source files.**
