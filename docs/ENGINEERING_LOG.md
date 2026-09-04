@@ -2023,3 +2023,92 @@ the frame and a symmetric scatter puts a third of the field behind it.
 
 **State: 219 tests passing, ruff and mypy clean across 76 source files; frontend
 builds with tsc and eslint clean.**
+
+---
+
+## Session: making it actually run, and spreading the lattice
+
+### "Failed to fetch everywhere"
+
+Nothing was broken in any module. The API was not running — I had stopped it
+during the previous session's work and never restarted it.
+
+That is worth treating as a real defect rather than an operator error, because
+it is the failure this project produces most often and the browser reports it
+with the least useful message in existence: a refused connection, a DNS failure
+and a rejected CORS origin all reach `fetch` identically as "Failed to fetch".
+Printed on six modules at once it reads as the application being broken.
+
+Three changes, in order of how much they matter:
+
+**`make doctor`.** Checks Postgres, the corpus, Ollama, the CORS configuration
+and the API, and prints the command that fixes whichever is down. Run against
+the broken state it said exactly the right thing — four checks green, `api`
+down, `fix: make api`. A diagnostic that reports a fault without saying how to
+clear it has only moved the question.
+
+**CORS defaulted to :3000 only.** A production build on :3100 was rejected by
+the browser, which is indistinguishable at the client from the server being
+down — while the server answers normally and logs a clean 200. Both local ports
+are now allowed by default. Still listed rather than wildcarded: this API
+returns compliance findings and should not be readable from an arbitrary page.
+
+**The frontend now names the condition.** `ApiUnreachableError` is thrown for
+network-level failure only — `fetch` rejects on nothing else, since anything the
+server answered, including a 500, resolves — and the failure panel says that
+nothing is wrong with the page, that it has no data because the backend could
+not be reached, and which command starts it. The retrieval module also stopped
+swallowing its seed query's failure, which had it inviting the reader to run a
+search that could not work.
+
+### The lattice, everywhere
+
+The landing page assembles a structure from a scattered field and the rest of
+the application had none of it. Every module page now carries the same lattice
+at rest, drifting and parallaxing with scroll.
+
+Mounted in the module shell rather than the root layout, so the landing page is
+excluded — it builds its own copy as the hero, and running both would stack two
+fields.
+
+Everything about it is set so it cannot compete with the content: no particle
+darker than the page's faintest border, links fainter still, and the whole thing
+offset right of the text column. The three constraints are the same ones the
+hero field needed, arrived at the same way.
+
+**The offset goes on the group, not the camera.** The first attempt moved the
+camera right, which points it *away* from an origin-centred field and put the
+entire lattice on the left of the frame — directly behind the text column, the
+one place it must not be. Exactly the mistake the hero scene had already taught,
+made again in mirror image.
+
+### The collapsed rail's sliver of text
+
+Two wrong diagnoses before the real one, which is worth recording because both
+wrong ones looked plausible.
+
+First guess: the abbreviation was bad. `न्या` is न्याय with its last syllable
+cut off — a word with its end missing rather than an abbreviation. True, and
+not the cause.
+
+Second guess: the replacement glyph. `न्` carries a virama, making it a
+half-form that does not stand alone; it renders as a bare vertical stroke. Also
+true, also not the cause.
+
+The actual cause is layout. At 68px wide with 16px padding either side there are
+36px of content, the toggle takes 25, and flex left the wordmark about three
+pixels. **Any character put there was going to render as a sliver.** Collapsed,
+the mark and the toggle now stack rather than share a row, and the mark is `न` —
+a complete letter.
+
+### Verified rather than assumed
+
+A smoke pass over all seven routes now checks three things per route: that the
+page rendered more than a trivial amount of text, that no error state is
+present, and that no canvas is sitting at the default 300×150 — the signature of
+the React Three Fiber sizing failure found earlier, which produces a blank panel
+and no error anywhere. All seven pass, each with both canvases correctly sized.
+
+**State: 219 tests passing, ruff and mypy clean across 76 source files; frontend
+builds with tsc and eslint clean across seven routes; all seven verified
+rendering live data.**
