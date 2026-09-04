@@ -1,0 +1,149 @@
+MASTER DIRECTION ON KNOW YOUR CUSTOMER
+
+This Direction is issued in exercise of powers conferred to regulate the conduct
+of customer identification and monitoring by Regulated Entities.
+
+CHAPTER II
+CUSTOMER ACCEPTANCE AND IDENTIFICATION
+
+9. Customer Acceptance Policy
+Every Regulated Entity shall frame a Customer Acceptance Policy approved by its
+Board.
+(a) no account shall be opened in an anonymous or fictitious name;
+(b) no account shall be opened where the entity is unable to apply appropriate
+customer due diligence measures;
+(c) the policy shall not result in denial of banking services to members of the
+general public, particularly those of low income.
+
+10. Customer Identification Procedure
+The Regulated Entity shall identify every customer and verify identity using
+reliable and independent sources at the commencement of the relationship.
+(a) identification shall be undertaken when establishing an account based
+relationship;
+(b) identification shall be undertaken when there is doubt about the veracity of
+previously obtained customer identification data;
+(c) identification shall be undertaken for any transaction of an amount equal to
+or exceeding the prescribed threshold carried out by a non account based
+customer.
+
+11. Officially Valid Documents
+For the purpose of verifying identity and address, a Regulated Entity shall
+obtain an officially valid document.
+(a) the passport, the driving licence, the voter identity card issued by the
+Election Commission, and the job card issued under the employment guarantee
+scheme shall be treated as officially valid documents;
+(b) where the document furnished does not contain current address, a deemed
+officially valid document for address may be obtained;
+(c) the Regulated Entity shall obtain the Permanent Account Number or an
+equivalent declaration where prescribed.
+
+CHAPTER III
+DIGITAL AND VIDEO BASED ONBOARDING
+
+12. Video Based Customer Identification Process
+A Regulated Entity may undertake identification through a video based process
+conducted by an authorised official of the entity.
+(a) the video session shall be conducted in a live environment and recorded, and
+the recording shall carry a date and time stamp;
+(b) the official shall capture a clear image of the customer and confirm that the
+image matches the photograph on the officially valid document;
+(c) the process shall incorporate liveness detection to establish that the
+customer is physically present at the time of the session and to defeat replay of
+recorded media;
+(d) the sequence of questions during the session shall be varied so as to
+establish that the interaction is genuine and in real time;
+(e) the session shall be conducted only from a domestic internet protocol address
+and the entity shall record the geographical coordinates of the customer.
+
+13. Electronic Verification and Consent
+Where identity is verified electronically, the Regulated Entity shall obtain the
+explicit consent of the customer before initiating the verification.
+(a) consent shall be recorded together with the date, time and mode by which it
+was given;
+(b) the customer shall be informed of the specific purpose for which the identity
+information will be used;
+(c) an audit trail of the electronic verification shall be preserved.
+
+CHAPTER IV
+DUE DILIGENCE AND RISK CATEGORISATION
+
+16. Customer Due Diligence Measures
+The Regulated Entity shall apply due diligence measures proportionate to the risk
+presented by the customer.
+(a) identify the customer and verify identity using reliable and independent
+source documents, data or information;
+(b) identify the beneficial owner and take reasonable measures to verify that
+person's identity, including understanding the ownership and control structure of
+a legal person;
+(c) obtain information on the purpose and intended nature of the business
+relationship;
+(d) conduct ongoing due diligence and scrutiny of transactions throughout the
+relationship to ensure consistency with the entity's knowledge of the customer.
+
+17. Risk Categorisation of Customers
+The Regulated Entity shall categorise every customer as low, medium or high risk.
+(a) categorisation shall consider the customer's identity, social and financial
+status, nature of business activity, and the country of origin;
+(b) the risk category assigned to a customer and the basis for it shall not be
+disclosed to the customer;
+(c) the risk category shall be reviewed at periodic intervals prescribed for each
+category.
+
+18. Enhanced Due Diligence
+Enhanced measures shall be applied where the risk is assessed as high.
+(a) accounts of politically exposed persons and their family members shall
+require approval of senior management before the relationship is established;
+(b) the source of funds and the source of wealth shall be established for high
+risk customers;
+(c) cross border correspondent banking relationships shall be subject to enhanced
+scrutiny before being entered into.
+
+19. Simplified Due Diligence
+Simplified measures may be applied where the risk is assessed as low, provided
+that simplification is not applied where there is any suspicion of money
+laundering.
+
+CHAPTER V
+SCREENING AND REPORTING
+
+22. Screening Against Designated Lists
+Before establishing a relationship and on an ongoing basis thereafter, the
+Regulated Entity shall screen the customer against the lists of designated
+persons and entities notified by the competent authority.
+(a) screening shall be performed prior to activation of the account and no
+transaction shall be permitted until screening is completed;
+(b) where a match is identified, the account shall not be opened and the matter
+shall be reported to the competent authority without delay;
+(c) the designated lists shall be updated and re-screened against the existing
+customer base whenever the authority notifies a change.
+
+23. Reporting of Suspicious Transactions
+The Regulated Entity shall report transactions of a suspicious nature to the
+Financial Intelligence Unit.
+(a) a suspicious transaction report shall be furnished within the prescribed
+period of the transaction being identified as suspicious;
+(b) the entity shall not disclose to the customer that a report has been or will
+be furnished.
+
+CHAPTER VI
+RECORDS AND TECHNOLOGY
+
+26. Maintenance of Records
+The Regulated Entity shall maintain records of transactions and of customer
+identification.
+(a) records of the identity of customers and of the evidence obtained shall be
+preserved for a period of five years from the date of cessation of the
+relationship;
+(b) records of transactions shall be preserved for a period of five years from
+the date of the transaction;
+(c) records shall be maintained in a form that permits reconstruction of
+individual transactions and their prompt production to a competent authority.
+
+27. Security of Customer Information
+The Regulated Entity shall put in place controls to protect customer information
+against unauthorised access.
+(a) access to customer identification records shall be restricted to personnel
+whose duties require it and shall be logged;
+(b) customer information transmitted over a public network shall be protected by
+encryption;
+(c) the entity shall periodically test the effectiveness of these controls.

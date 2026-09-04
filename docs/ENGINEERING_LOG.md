@@ -610,3 +610,132 @@ That is four corrections to the scanner, every one found by running it rather
 than reading it. The pattern is consistent: each fix was a *narrowing* of an
 over-broad exemption or a *widening* of an over-narrow one, and none were
 visible by inspection.
+
+---
+
+## 2026-09-04 — The retrieval spine, measured before anything depends on it
+
+Commitment made earlier in the project: build retrieval, then **benchmark it in
+isolation before writing a single agent**. Every downstream metric is capped by
+whether the governing clause was retrieved at all, so measuring it after agents
+exist would mean attributing retrieval's ceiling to the agents' behaviour.
+
+That discipline paid for itself immediately — it refuted one of the project's
+own architectural assumptions.
+
+### Built
+
+- `parsers.py` — PDF/DOCX/HTML/text extraction. **Deliberately light
+  normalisation**: aggressive de-hyphenation or line reflowing risks corrupting
+  clause numbering, and a mangled number is a clause that can never be cited.
+- `embedder.py` — batching with a hard dimension check. A model swap that
+  changes vector width must fail loudly at ingest, not as a confusing insert
+  error later.
+- `pipeline.py` — parse → split → embed → persist. **Idempotent by content
+  hash**; a changed file creates a *new version* rather than mutating the old
+  one, because a clause that has already been cited must never change beneath
+  the citation.
+- `hybrid.py` — dense (pgvector/cosine) and lexical (`ts_rank_cd`) retrieval,
+  weighted RRF, jurisdiction and in-force scoping, exact citation resolution.
+- `rerank.py` — cross-encoder (bge-reranker-v2-m3), lazily loaded, degrading to
+  unreranked retrieval when absent.
+- `search.py` — the single entry point agents call. Agents do not choose a
+  retrieval strategy; changing it is one edit here plus a re-run of the harness.
+- A **34-query labelled set** over 104 clauses from RBI MD-KYC, DPDP 2023 and
+  GDPR, plus MRR / Recall / nDCG / Hit@k implemented directly rather than
+  imported, so every reported number has a visible definition.
+
+### Bug found by measurement — the lexical arm was inert
+
+First run: lexical MRR **0.046**, with the governing clause outside the top 10
+for **22 of 24** queries. Not "weak" — broken.
+
+Cause: `websearch_to_tsquery` (like `plainto_tsquery`) **conjoins** every term.
+A fifteen-word stakeholder question demands one clause containing all nine
+stemmed terms, and matched **zero rows**. The same terms OR-ed matched 36.
+
+Fix: rewrite the query to a disjunction, letting `ts_rank_cd` do the
+discriminating — recall from the OR, precision from density-and-proximity
+ranking. Lexical MRR went **0.046 → 0.249**, a 5× improvement.
+
+Worth dwelling on: this component was fully wired, imported cleanly, returned
+plausible-looking results, and was contributing *nothing*. No test would have
+caught it, because it failed by returning a well-formed empty list. Only a
+labelled set with a known right answer exposes this class of defect.
+
+### The assumption that was wrong
+
+The architecture notes claimed hybrid fusion plus reranking would be "a large,
+measurable lift over naive dense retrieval". **Half of that was false.**
+
+Combined results (n=34):
+
+| arm | MRR | R@1 | R@5 | nDCG@10 | Hit@5 |
+|---|---|---|---|---|---|
+| lexical | 0.406 | 0.225 | 0.441 | 0.446 | 0.706 |
+| dense | 0.659 | 0.365 | 0.659 | 0.721 | 0.971 |
+| hybrid (RRF) | 0.620 | 0.314 | 0.613 | 0.632 | 0.912 |
+| **dense + rerank** | **0.737** | **0.400** | **0.672** | **0.743** | **1.000** |
+| hybrid + rerank | 0.737 | 0.400 | 0.672 | 0.743 | 1.000 |
+
+1. **Reranking is the real win.** +11.8 % MRR, and **Hit@5 = 1.000** — after
+   reranking, a governing clause is in the top five for *every* query in the set.
+   That is precisely the number the fixed-size evidence window depends on.
+2. **Fusion is not justified here.** Hybrid scored *below* dense alone. And
+   `hybrid + rerank` equals `dense + rerank` **to three decimal places** — the
+   lexical arm changes nothing after reranking while adding a query and its
+   latency.
+3. A weight sweep on paraphrase queries was **monotonic** — 0.579 at
+   `w_lex = 0` falling to 0.443 at `w_lex = 1.0`, with no interior optimum. There
+   was no tuning that rescued it.
+
+### Guarding against a self-serving benchmark
+
+The gold queries were written in lay stakeholder phrasing deliberately, which
+**structurally disadvantages lexical retrieval**. Rather than accept a result my
+own test design had produced, a second subset of 10 `term_of_art` queries was
+added — naming the precise legal category, the case lexical search exists for.
+
+| arm | paraphrase (24) | term_of_art (10) |
+|---|---|---|
+| lexical | 0.249 | 0.783 |
+| dense | 0.579 | 0.850 |
+| hybrid | 0.503 | **0.900** |
+| dense + rerank | **0.690** | 0.850 |
+
+The arms *are* genuinely complementary — lexical is **3.1× better** on
+term-of-art than on paraphrase, and hybrid wins outright on that subset. But
+paraphrase queries dominate real requirement elicitation, and dense+rerank wins
+decisively there. The subsets are scored separately and kept separate, because a
+blended average would have concealed that the two retrievers succeed on disjoint
+query types.
+
+### Decision (ADR-0004)
+
+**Default: dense → cross-encoder rerank. Lexical fusion disabled by weight, not
+deleted.** Retained because the result is corpus-dependent: 104 clauses flatters
+dense retrieval, and lexical methods characteristically hold up better as a
+corpus grows and embedding space crowds. The weight is a config knob so
+re-enabling costs nothing, and the ADR records the re-measurement triggers
+(corpus > ~1,000 clauses, embedding model change, query-mix shift).
+
+### Honest limitations
+
+- **34 queries over 104 clauses is a small benchmark.** These numbers indicate a
+  direction; they are not a general claim about hybrid retrieval.
+- The relevance judgements are the author's own. A second annotator and an
+  inter-annotator agreement figure would materially strengthen this.
+- The corpus is *representative* text written to mirror real clause structure
+  and terminology, not the verbatim instruments. Structure and vocabulary are
+  faithful; exact wording is not.
+- Latency is now reranker-dominated: **~1 s/query** versus ~140 ms without.
+
+### Also
+
+- `asyncio_default_*_loop_scope = "session"` — the DB engine and cached LLM
+  providers hold connections bound to their creating loop, and a per-test loop
+  closed them out from under session-scoped fixtures.
+- Two exceptions renamed for the `Error` suffix convention (`N818`).
+- README corrected: it still advertised the hybrid claim this work refuted.
+
+**State: 63 tests passing, ruff clean, mypy clean across 36 source files.**

@@ -1,0 +1,76 @@
+DIGITAL PERSONAL DATA PROTECTION PROVISIONS
+
+CHAPTER II
+OBLIGATIONS OF DATA FIDUCIARIES
+
+4. Grounds for Processing
+A person may process the personal data of a Data Principal only in accordance
+with the provisions of this Act and for a lawful purpose for which the Data
+Principal has given consent, or for a legitimate use.
+
+5. Notice
+Every request for consent shall be accompanied by a notice given to the Data
+Principal.
+(a) the notice shall describe the personal data proposed to be processed and the
+purpose of the processing;
+(b) the notice shall describe the manner in which the Data Principal may withdraw
+consent and exercise rights;
+(c) the notice shall be presented in clear and plain language, and the Data
+Principal shall be given the option to access it in any language specified in the
+Eighth Schedule.
+
+6. Consent
+The consent given by the Data Principal shall be free, specific, informed,
+unconditional and unambiguous, given by a clear affirmative action.
+(a) consent shall signify agreement to the processing of personal data for the
+specified purpose and shall be limited to such personal data as is necessary for
+that purpose;
+(b) the Data Principal shall have the right to withdraw consent at any time, and
+the ease of withdrawing consent shall be comparable to the ease of giving it;
+(c) on withdrawal of consent, the Data Fiduciary shall cease processing within a
+reasonable time unless retention is required by law.
+
+8. General Obligations of a Data Fiduciary
+A Data Fiduciary shall be responsible for compliance in respect of any processing
+undertaken by it or on its behalf by a Data Processor.
+(a) the Data Fiduciary shall implement appropriate technical and organisational
+measures to ensure effective observance of these provisions;
+(b) the Data Fiduciary shall protect personal data in its possession by taking
+reasonable security safeguards to prevent a personal data breach;
+(c) in the event of a personal data breach, the Data Fiduciary shall give notice
+to the Board and to each affected Data Principal;
+(d) the Data Fiduciary shall erase personal data upon the Data Principal
+withdrawing consent, or as soon as it is reasonable to assume that the specified
+purpose is no longer being served, whichever is earlier, unless retention is
+necessary for compliance with law.
+
+9. Processing of Personal Data of Children
+A Data Fiduciary shall obtain verifiable consent from the parent or lawful
+guardian before processing the personal data of a child.
+(a) the Data Fiduciary shall not undertake processing that is likely to cause any
+detrimental effect on the well being of a child;
+(b) the Data Fiduciary shall not undertake tracking or behavioural monitoring of
+children or targeted advertising directed at children.
+
+CHAPTER III
+RIGHTS OF DATA PRINCIPALS
+
+11. Right to Access Information
+The Data Principal shall have the right to obtain from the Data Fiduciary a
+summary of the personal data being processed and the processing activities
+undertaken, together with the identities of other Data Fiduciaries with whom the
+data has been shared.
+
+12. Right to Correction and Erasure
+The Data Principal shall have the right to correction, completion, updating and
+erasure of personal data for the processing of which consent was given.
+(a) on receiving a request for correction, the Data Fiduciary shall correct
+inaccurate or misleading personal data;
+(b) on receiving a request for erasure, the Data Fiduciary shall erase the
+personal data unless retention is necessary for the specified purpose or for
+compliance with law.
+
+13. Right of Grievance Redressal
+The Data Principal shall have the right to a readily available means of
+registering a grievance with the Data Fiduciary, which shall respond within the
+prescribed period.

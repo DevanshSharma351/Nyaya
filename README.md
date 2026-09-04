@@ -34,7 +34,7 @@ makes span-level citation and a measurable citation-correctness metric possible.
 
 | | |
 |---|---|
-| **Benchmarked** | Evaluated against public gold-standard datasets (PROMISE NFR, PURE), not only self-authored demos. |
+| **Benchmarked** | Retrieval is measured on a labelled clause set before any agent depends on it; requirement classification will be evaluated against public gold-standard datasets (PROMISE NFR, PURE), not only self-authored demos. |
 | **Calibrated confidence** | Confidence is a fusion of retrieval score, NLI entailment, self-consistency and rule-validator outcome — not model self-report. Reported with a reliability diagram and Expected Calibration Error. |
 | **Deterministic validation** | Every LLM compliance claim is checked by a non-LLM validator: the cited clause must exist verbatim in the versioned KB, must entail the control, and mandatory-control coverage must be complete. |
 | **Regulatory change impact** | Amending a clause walks the traceability graph and reports exactly which requirements, controls and tests are now stale. |
@@ -65,7 +65,7 @@ possible, which is what makes the outputs reproducible and auditable.
 - **Backend** — Python 3.12, FastAPI, Pydantic
 - **Orchestration** — LangGraph (chosen for explicit state, checkpointing and *interrupts*, which are the human-approval primitive)
 - **Datastore** — PostgreSQL 17 + pgvector, single database for both relational requirements and embeddings
-- **Retrieval** — hybrid dense (pgvector) + lexical (`tsvector`) fused by Reciprocal Rank Fusion, then cross-encoder reranking
+- **Retrieval** — dense (pgvector, bge-m3) then cross-encoder reranking. Lexical `tsvector` search and RRF fusion are implemented but **off by default**: fusion measured *worse* than dense alone on the labelled set (see ADR-0004)
 - **Models** — provider-agnostic; local Ollama by default, free-tier Gemini/Groq optional, Claude drop-in
 - **Privacy** — Microsoft Presidio detection/masking with a reversible token vault
 - **Frontend** — Next.js, TypeScript, Tailwind, shadcn/ui, React Flow

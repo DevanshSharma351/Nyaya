@@ -20,6 +20,12 @@ down: ## Stop containers
 db-reset: ## Drop and recreate the schema (destroys all data)
 	uv run python scripts/reset_db.py
 
+corpus: ## Ingest the bundled regulatory corpus
+	uv run python scripts/ingest_corpus.py
+
+eval-retrieval: ## Benchmark the retrieval spine against the labelled set
+	uv run python -m nyaya.eval.retrieval_eval
+
 test: ## Run the test suite
 	uv run pytest -q
 

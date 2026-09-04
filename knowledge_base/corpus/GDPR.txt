@@ -1,0 +1,54 @@
+GENERAL DATA PROTECTION PROVISIONS
+
+Article 5
+Principles relating to processing of personal data
+1. Personal data shall be:
+(a) processed lawfully, fairly and in a transparent manner in relation to the
+data subject;
+(b) collected for specified, explicit and legitimate purposes and not further
+processed in a manner incompatible with those purposes;
+(c) adequate, relevant and limited to what is necessary in relation to the
+purposes for which they are processed;
+(d) accurate and, where necessary, kept up to date;
+(e) kept in a form which permits identification of data subjects for no longer
+than is necessary for the purposes for which the personal data are processed;
+(f) processed in a manner that ensures appropriate security of the personal data,
+including protection against unauthorised or unlawful processing and against
+accidental loss, destruction or damage.
+
+Article 25
+Data protection by design and by default
+1. The controller shall implement appropriate technical and organisational
+measures, both at the time of determination of the means for processing and at
+the time of the processing itself, which are designed to implement data
+protection principles in an effective manner.
+2. The controller shall implement measures for ensuring that, by default, only
+personal data which are necessary for each specific purpose of the processing are
+processed.
+
+Article 32
+Security of processing
+1. Taking into account the state of the art and the risks of varying likelihood
+and severity, the controller shall implement appropriate technical and
+organisational measures to ensure a level of security appropriate to the risk.
+(a) the pseudonymisation and encryption of personal data;
+(b) the ability to ensure the ongoing confidentiality, integrity, availability
+and resilience of processing systems and services;
+(c) the ability to restore the availability of and access to personal data in a
+timely manner in the event of a physical or technical incident;
+(d) a process for regularly testing, assessing and evaluating the effectiveness
+of technical and organisational measures for ensuring the security of the
+processing.
+
+Article 33
+Notification of a personal data breach to the supervisory authority
+1. In the case of a personal data breach, the controller shall without undue
+delay and, where feasible, not later than seventy two hours after having become
+aware of it, notify the personal data breach to the supervisory authority.
+
+Article 35
+Data protection impact assessment
+1. Where a type of processing is likely to result in a high risk to the rights
+and freedoms of natural persons, the controller shall, prior to the processing,
+carry out an assessment of the impact of the envisaged processing operations on
+the protection of personal data.
