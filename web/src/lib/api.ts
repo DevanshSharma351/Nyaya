@@ -9,12 +9,37 @@
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api";
 
+/**
+ * The API could not be reached at all.
+ *
+ * Distinguished from every other failure because it is the only one the reader
+ * can act on, and because the browser gives it the least useful message in
+ * existence: a connection refused, a DNS failure and a rejected CORS origin all
+ * surface identically as "Failed to fetch". Reported as an error message on
+ * six modules at once, that reads as the application being broken, when the
+ * actual state is almost always that the backend is not running.
+ */
+export class ApiUnreachableError extends Error {
+  readonly base = BASE;
+  constructor() {
+    super(`Could not reach the API at ${BASE}`);
+    this.name = "ApiUnreachableError";
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${BASE}${path}`, {
-    ...init,
-    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
-    cache: "no-store",
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${BASE}${path}`, {
+      ...init,
+      headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+      cache: "no-store",
+    });
+  } catch {
+    // `fetch` rejects only on network-level failure; anything the server
+    // answered - including a 500 - resolves and is handled below.
+    throw new ApiUnreachableError();
+  }
   if (!response.ok) {
     const detail = await response.text().catch(() => response.statusText);
     throw new Error(`${response.status}: ${detail.slice(0, 300)}`);

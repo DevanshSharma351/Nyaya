@@ -56,7 +56,10 @@ export default function RetrievalPage() {
     api
       .search(EXAMPLES[0], 6)
       .then((found) => !cancelled && setResults(found))
-      .catch(() => undefined);
+      // Surfaced rather than swallowed. This was silent, so with the API down
+      // the module showed "Run a search to see which clauses govern it" - an
+      // invitation to do something that could not work, and no hint why.
+      .catch((e) => !cancelled && setError((e as Error).message));
     return () => {
       cancelled = true;
     };

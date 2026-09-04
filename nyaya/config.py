@@ -83,8 +83,16 @@ class Settings(BaseSettings):
     # a deployment fact, not a constant - hardcoding :3000 meant a production
     # build served on any other port could not reach its own backend, which is
     # exactly how it failed the first time it was served from one.
+    # 3000 is `next dev`, 3100 is a local production build. Both are localhost
+    # and neither is a deployment origin, so listing them by default costs
+    # nothing and removes a failure that looks exactly like the API being down:
+    # a browser CORS rejection surfaces to fetch() as "Failed to fetch", with no
+    # indication that the server answered perfectly well.
     cors_origins: str = Field(
-        default="http://localhost:3000,http://127.0.0.1:3000",
+        default=(
+            "http://localhost:3000,http://127.0.0.1:3000,"
+            "http://localhost:3100,http://127.0.0.1:3100"
+        ),
         alias="NYAYA_CORS_ORIGINS",
     )
 

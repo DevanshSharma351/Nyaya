@@ -230,20 +230,51 @@ export function Empty({ children }: { children: ReactNode }) {
   );
 }
 
-/** Distinguishes "nothing found" from "we could not check". */
+/**
+ * Distinguishes "nothing found" from "we could not check".
+ *
+ * And, within the second, distinguishes a backend that is not running from one
+ * that answered badly. The browser reports a refused connection, a DNS failure
+ * and a rejected CORS origin all as "Failed to fetch"; printed verbatim on six
+ * modules at once it reads as the application being broken, when what is
+ * actually true is that nobody started the API. Saying so, with the command
+ * that starts it, turns a dead end into a next step.
+ */
 export function Failure({ message }: { message: string }) {
+  const unreachable = /failed to fetch|could not reach the api|networkerror|load failed/i.test(
+    message,
+  );
+
   return (
     <div
       className="body"
       style={{
-        color: "var(--gap)",
-        border: `1px solid ${tint("var(--gap)", 26)}`,
-        background: tint("var(--gap)", 5),
+        color: unreachable ? "var(--text)" : "var(--gap)",
+        border: `1px solid ${tint(unreachable ? "var(--review)" : "var(--gap)", 30)}`,
+        background: tint(unreachable ? "var(--review)" : "var(--gap)", 5),
         borderRadius: 12,
-        padding: "12px 14px",
+        padding: "14px 16px",
       }}
     >
-      Could not complete the check — {message}
+      {unreachable ? (
+        <>
+          <div style={{ fontWeight: 550 }}>The API is not responding.</div>
+          <p className="caption mt-1.5 mb-0" style={{ maxWidth: 560 }}>
+            Nothing is wrong with this page — it has no data because the backend
+            could not be reached. Start it with{" "}
+            <span className="mono" style={{ color: "var(--text)" }}>
+              make api
+            </span>
+            , or run{" "}
+            <span className="mono" style={{ color: "var(--text)" }}>
+              make doctor
+            </span>{" "}
+            to see which of Postgres, Ollama and the API is down.
+          </p>
+        </>
+      ) : (
+        <>Could not complete the check — {message}</>
+      )}
     </div>
   );
 }

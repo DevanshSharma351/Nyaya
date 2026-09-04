@@ -1,4 +1,4 @@
-.PHONY: help setup hooks up down db-reset corpus seed test lint fmt scan check
+.PHONY: help setup hooks up down db-reset corpus seed doctor test lint fmt scan check
 
 help:
 	@grep -E '^[a-z-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n",$$1,$$2}'
@@ -35,6 +35,9 @@ eval-compliance: ## Measure the citation validator against the labelled set
 
 eval-judge: ## Compare the NLI validator against an LLM judge (slow)
 	uv run python -m nyaya.eval.judge_eval
+
+doctor: ## Check that everything the app needs is actually up
+	@uv run python scripts/doctor.py
 
 api: ## Run the API on :8000
 	uv run uvicorn nyaya.api.app:app --reload --port 8000
