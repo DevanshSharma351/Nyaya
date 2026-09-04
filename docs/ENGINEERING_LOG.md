@@ -171,7 +171,7 @@ targeted all of `~` and hung.
   commits.
 - **Fix applied:** the project was given its own repository, isolated from `~`.
 - **Outstanding, for the user to decide:** whether to delete `~/.git`. Left in
-  place deliberately — removing it is destructive and not the assistant's call.
+  place deliberately — removing it is destructive and is the repository owner's decision.
   Recommended, since an accidental `git add -A` there could stage SSH and cloud
   credentials.
 
