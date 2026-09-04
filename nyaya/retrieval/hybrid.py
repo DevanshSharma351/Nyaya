@@ -351,9 +351,9 @@ async def load_context(session: AsyncSession, items: list[Retrieved]) -> None:
 
         parent_rows = (
             await session.execute(
-                select(
-                    Clause.id, Clause.heading, Clause.text, Clause.clause_number
-                ).where(Clause.id.in_(owners_by_parent.keys()))
+                select(Clause.id, Clause.heading, Clause.text, Clause.clause_number).where(
+                    Clause.id.in_(owners_by_parent.keys())
+                )
             )
         ).all()
 

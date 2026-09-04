@@ -1135,3 +1135,96 @@ citation is genuine*.
   to contain.
 
 **State: 144 tests passing, ruff clean, mypy clean across 52 source files.**
+
+---
+
+## 2026-09-04 — The SDLC selection engine
+
+The brief asks for a **justified, ranked** lifecycle recommendation, not a
+label. This is the piece where the design commitment "the mathematics decides,
+the model only explains" is actually cashed out.
+
+An LLM asked directly to pick a lifecycle produces a plausible paragraph that
+cannot be re-derived, cannot be challenged on its inputs, and cannot be compared
+across projects. Here the factor scores, the weights (with their consistency
+ratio) and the arithmetic are all inspectable, so an architect who disagrees can
+point at the specific factor score they dispute rather than arguing with prose.
+
+### AHP for the weights
+
+Weights cannot be asserted. "Regulatory criticality matters more than delivery
+speed" is defensible; "regulatory criticality has weight 0.23" is not, unless
+something derives it.
+
+AHP derives weights from pairwise comparisons, which people make far more
+reliably than direct weight assignment — an architect can say regulatory
+criticality is *strongly* more important than team familiarity without being
+able to put a number on it.
+
+The property that earns AHP its place is the **Consistency Ratio**. If A > B and
+B > C but C > A, CR exposes it. Verified: coherent judgements give CR 0.004; a
+deliberately cyclic set is rejected at CR 2.381. A hand-assigned weight vector
+can never be inconsistent, and therefore can never warn you.
+
+The principal eigenvector is used rather than the row-geometric-mean
+approximation, because the eigenvalue it produces is what the consistency
+measure is defined on — approximating the weights would leave CR unfounded.
+
+### TOPSIS for the ranking
+
+Produces a graded closeness coefficient rather than a winner, which is what the
+brief asks for: a margin of 0.02 and a margin of 0.30 mean very different things
+to an architect, and only a graded method shows that. Near-ties are flagged
+explicitly as decisions belonging to humans.
+
+Vector normalisation is used rather than min-max, so the *ratio* between
+alternatives is preserved; min-max would force the worst alternative to zero on
+every criterion regardless of how good it actually was.
+
+### The modelling error, found by testing scenarios
+
+First implementation returned an **Agile–DevSecOps hybrid for a low-risk
+exploratory internal dashboard**. Wrong: the whole advantage of plain Agile
+there is its lightness.
+
+Two compounding causes, both worth recording:
+
+**1. Not every criterion is "more is better".** Process ceremony has a *cost*. A
+model demanding heavy documentation and formal verification is a **poor** fit for
+a low-risk tool, not a neutral one — the ceremony is paid for whether needed or
+not. Criteria were split: capability criteria (security, complexity handling)
+score on capability; ceremony criteria score on **proximity to the need**, so
+over-serving is penalised exactly as under-serving is.
+
+**2. The subtler one — match criteria must not be weighted by the factor.**
+Scaling every criterion's weight by how strongly the project exhibits it is
+right for capability, and **exactly wrong** for match. A project needing light
+process cares about not being burdened just as much as a regulated one cares
+about rigour — but scaling by the factor gave the anti-ceremony criterion almost
+no weight precisely when it mattered most. The criterion that should have
+penalised excess ceremony was discounted away by its own low factor score.
+
+After both fixes, all five scenarios return the lifecycle the brief's own
+guidance table prescribes:
+
+| project profile | result | brief's guidance |
+|---|---|---|
+| regulated + fast-changing UX (eKYC) | agile-devsecops hybrid **84 %** | "high regulation with evolving requirements" |
+| stable + strict verification (payments switch) | v_model **79 %** | "strict verification and validation" |
+| stable + heavy approvals (ledger migration) | v_model **80 %**, waterfall 65 % | "stable requirements and extensive approvals" |
+| high uncertainty + complexity (fraud platform) | spiral **72 %** *(close call flagged)* | "high uncertainty or technical risk" |
+| low risk + exploratory (dashboard) | agile **80 %** | "frequently changing requirements" |
+
+That agreement is a check, not a proof — the guidance informed the candidate
+profiles, so this shows the engine encodes the intended judgement consistently,
+not that the judgement is correct. **Validating it against practising architects
+is the outstanding work**, and the profile table is the part most in need of it.
+
+### Also
+
+- `MATCH_CRITERIA`, `SALIENCE_FLOOR` and the profile table are all module-level
+  and documented, so the parts a practitioner would want to argue with are the
+  parts that are easiest to find and change.
+- 20 tests, including one scenario test per row of the guidance table.
+
+**State: 171 tests passing, ruff clean, mypy clean across 58 source files.**

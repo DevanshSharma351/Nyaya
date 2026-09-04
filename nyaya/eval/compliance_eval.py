@@ -174,9 +174,7 @@ def calibrate(scored: list[Scored]) -> tuple[list[CalibrationBin], float]:
         ).score
 
         for bucket in bins:
-            if bucket.low <= confidence < bucket.high or (
-                bucket.high == 1.0 and confidence == 1.0
-            ):
+            if bucket.low <= confidence < bucket.high or (bucket.high == 1.0 and confidence == 1.0):
                 bucket.count += 1
                 bucket.confidence_sum += confidence
                 # The event being predicted is "this citation is genuine".
@@ -200,13 +198,17 @@ def render(report: EvalReport) -> str:
     lines: list[str] = []
     pos = sum(s.judgement.supports for s in report.scored)
     neg = len(report.scored) - pos
-    lines.append(f"citation validation: {len(report.scored)} pairs ({pos} positive, {neg} negative)")
+    lines.append(
+        f"citation validation: {len(report.scored)} pairs ({pos} positive, {neg} negative)"
+    )
     if report.unresolved:
         lines.append(f"UNRESOLVED citation keys: {report.unresolved}")
     lines.append("")
 
-    lines.append(f"{'thresh':>7} {'prec':>6} {'recall':>7} {'F1':>6} {'acc':>6} "
-                 f"{'TP':>4} {'FP':>4} {'FN':>4} {'TN':>4}")
+    lines.append(
+        f"{'thresh':>7} {'prec':>6} {'recall':>7} {'F1':>6} {'acc':>6} "
+        f"{'TP':>4} {'FP':>4} {'FN':>4} {'TN':>4}"
+    )
     lines.append("-" * 60)
     for t in report.thresholds:
         lines.append(
@@ -223,10 +225,14 @@ def render(report: EvalReport) -> str:
 
     # How the three-way outcome actually lands: what fraction of correct
     # citations is auto-confirmed, versus routed to a human rather than lost.
-    confirmed_pos = sum(1 for s in report.scored if s.judgement.supports and s.entailment >= best.threshold)
+    confirmed_pos = sum(
+        1 for s in report.scored if s.judgement.supports and s.entailment >= best.threshold
+    )
     total_pos = sum(1 for s in report.scored if s.judgement.supports)
     review_pos = total_pos - confirmed_pos
-    confirmed_neg = sum(1 for s in report.scored if not s.judgement.supports and s.entailment >= best.threshold)
+    confirmed_neg = sum(
+        1 for s in report.scored if not s.judgement.supports and s.entailment >= best.threshold
+    )
     lines.append("")
     lines.append("three-way outcome at the selected threshold:")
     lines.append(f"  auto-confirmed correct citations : {confirmed_pos}/{total_pos}")
@@ -245,8 +251,7 @@ def render(report: EvalReport) -> str:
     lines.append(f"Expected Calibration Error: {report.ece:.3f}")
 
     false_accepts = [
-        s for s in report.scored
-        if s.entailment >= best.threshold and not s.judgement.supports
+        s for s in report.scored if s.entailment >= best.threshold and not s.judgement.supports
     ]
     if false_accepts:
         lines.append("")
@@ -257,8 +262,7 @@ def render(report: EvalReport) -> str:
             )
 
     unconfirmed = [
-        s for s in report.scored
-        if s.entailment < best.threshold and s.judgement.supports
+        s for s in report.scored if s.entailment < best.threshold and s.judgement.supports
     ]
     if unconfirmed:
         lines.append("")

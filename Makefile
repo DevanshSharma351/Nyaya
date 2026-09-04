@@ -29,6 +29,9 @@ eval-retrieval: ## Benchmark the retrieval spine against the labelled set
 eval-compliance: ## Measure the citation validator against the labelled set
 	uv run python -m nyaya.eval.compliance_eval
 
+eval-judge: ## Compare the NLI validator against an LLM judge (slow)
+	uv run python -m nyaya.eval.judge_eval
+
 test: ## Run the test suite
 	uv run pytest -q
 

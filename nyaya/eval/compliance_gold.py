@@ -70,8 +70,7 @@ R_ACCESS_LOG = (
     "of the reviewer and the time of access."
 )
 R_ENCRYPT = (
-    "The system shall encrypt customer identification documents transmitted over "
-    "public networks."
+    "The system shall encrypt customer identification documents transmitted over public networks."
 )
 R_CONSENT_WITHDRAW = (
     "The system shall allow a customer to withdraw consent using the same number "
@@ -82,12 +81,10 @@ R_PEP = (
     "shall require senior-management approval before the account is activated."
 )
 R_BREACH = (
-    "When a personal data breach is confirmed, the system shall notify the "
-    "supervisory authority."
+    "When a personal data breach is confirmed, the system shall notify the supervisory authority."
 )
 R_MINIMISE = (
-    "The system shall collect only the personal data fields necessary for the "
-    "onboarding purpose."
+    "The system shall collect only the personal data fields necessary for the onboarding purpose."
 )
 R_TIPPING = (
     "The system shall not disclose to the customer that a suspicious transaction "
@@ -106,67 +103,62 @@ JUDGEMENTS: tuple[CitationJudgement, ...] = (
     _neg("R1", R_SCREEN, "RBI-MD-KYC:10", "identification, not list screening"),
     _neg("R1", R_SCREEN, "RBI-MD-KYC:22(c)", "ongoing re-screening, not pre-activation"),
     _neg("R1", R_SCREEN, "RBI-MD-KYC:17", "risk categorisation", difficulty="normal"),
-
     # --- retention ---
     _pos("R2", R_RETAIN, "RBI-MD-KYC:26(a)", "exactly this duty"),
     _pos("R2", R_RETAIN, "RBI-MD-KYC:26", "the parent obligation"),
     _neg("R2", R_RETAIN, "RBI-MD-KYC:26(b)", "transaction records, not identity records"),
     _neg("R2", R_RETAIN, "RBI-MD-KYC:22(a)", "screening timing"),
     _neg("R2", R_RETAIN, "DPDP-2023:8(d)", "erasure duty, the opposite direction"),
-
     # --- liveness ---
     _pos("R3", R_LIVENESS, "RBI-MD-KYC:12(c)", "the liveness obligation"),
     _neg("R3", R_LIVENESS, "RBI-MD-KYC:12(a)", "recording the session, not liveness"),
     _neg("R3", R_LIVENESS, "RBI-MD-KYC:12(b)", "photo matching, not presence"),
     _neg("R3", R_LIVENESS, "RBI-MD-KYC:12(e)", "geolocation, not presence"),
-
     # --- beneficial owner ---
     _pos("R4", R_BENEFICIAL, "RBI-MD-KYC:16(b)", "the beneficial-owner duty"),
     _neg("R4", R_BENEFICIAL, "RBI-MD-KYC:16(a)", "customer identity, not beneficial owner"),
     _neg("R4", R_BENEFICIAL, "RBI-MD-KYC:16(c)", "purpose of the relationship"),
     _neg("R4", R_BENEFICIAL, "RBI-MD-KYC:11(a)", "valid documents list"),
-
     # --- access logging ---
     _pos("R5", R_ACCESS_LOG, "RBI-MD-KYC:27(a)", "restrict and log access"),
     _neg("R5", R_ACCESS_LOG, "RBI-MD-KYC:27(b)", "encryption, not access logging"),
-    _neg("R5", R_ACCESS_LOG, "RBI-MD-KYC:13(c)", "audit trail of e-verification", difficulty="hard"),
+    _neg(
+        "R5", R_ACCESS_LOG, "RBI-MD-KYC:13(c)", "audit trail of e-verification", difficulty="hard"
+    ),
     _neg("R5", R_ACCESS_LOG, "RBI-MD-KYC:26(c)", "record reconstruction"),
-
     # --- encryption ---
     _pos("R6", R_ENCRYPT, "RBI-MD-KYC:27(b)", "encryption over public networks"),
     _pos("R6", R_ENCRYPT, "GDPR:Article 32.1(a)", "encryption of personal data"),
     _neg("R6", R_ENCRYPT, "RBI-MD-KYC:27(a)", "access control, not encryption"),
     _neg("R6", R_ENCRYPT, "GDPR:Article 32.1(c)", "restoration, not confidentiality"),
-
     # --- consent withdrawal ---
     _pos("R7", R_CONSENT_WITHDRAW, "DPDP-2023:6(b)", "ease of withdrawal"),
     _neg("R7", R_CONSENT_WITHDRAW, "DPDP-2023:6(a)", "scope of consent"),
-    _neg("R7", R_CONSENT_WITHDRAW, "DPDP-2023:5(b)", "notice of how to withdraw", difficulty="hard"),
-    _neg("R7", R_CONSENT_WITHDRAW, "DPDP-2023:6(c)", "cessation after withdrawal", difficulty="hard"),
-
+    _neg(
+        "R7", R_CONSENT_WITHDRAW, "DPDP-2023:5(b)", "notice of how to withdraw", difficulty="hard"
+    ),
+    _neg(
+        "R7", R_CONSENT_WITHDRAW, "DPDP-2023:6(c)", "cessation after withdrawal", difficulty="hard"
+    ),
     # --- politically exposed persons ---
     _pos("R8", R_PEP, "RBI-MD-KYC:18(a)", "senior-management approval for PEPs"),
     _neg("R8", R_PEP, "RBI-MD-KYC:18(b)", "source of funds, not approval"),
     _neg("R8", R_PEP, "RBI-MD-KYC:17(a)", "risk factors"),
     _neg("R8", R_PEP, "RBI-MD-KYC:19", "simplified due diligence, the opposite"),
-
     # --- breach notification ---
     _pos("R9", R_BREACH, "GDPR:Article 33.1", "notification to the authority"),
     _pos("R9", R_BREACH, "DPDP-2023:8(c)", "notice to the Board"),
     _neg("R9", R_BREACH, "GDPR:Article 32.1(b)", "security measures, not notification"),
     _neg("R9", R_BREACH, "GDPR:Article 35.1", "impact assessment"),
-
     # --- minimisation ---
     _pos("R10", R_MINIMISE, "GDPR:Article 5.1(c)", "data minimisation"),
     _pos("R10", R_MINIMISE, "GDPR:Article 25.2", "by default, only what is necessary"),
     _neg("R10", R_MINIMISE, "GDPR:Article 5.1(b)", "purpose limitation", difficulty="hard"),
     _neg("R10", R_MINIMISE, "GDPR:Article 5.1(e)", "storage limitation", difficulty="hard"),
-
     # --- tipping off ---
     _pos("R11", R_TIPPING, "RBI-MD-KYC:23(b)", "the tipping-off prohibition"),
     _neg("R11", R_TIPPING, "RBI-MD-KYC:23(a)", "filing deadline, not disclosure"),
     _neg("R11", R_TIPPING, "RBI-MD-KYC:17(b)", "risk-category non-disclosure", difficulty="hard"),
-
     # --- geolocation ---
     _pos("R12", R_GEO, "RBI-MD-KYC:12(e)", "coordinates and domestic IP"),
     _neg("R12", R_GEO, "RBI-MD-KYC:12(c)", "liveness, not location"),

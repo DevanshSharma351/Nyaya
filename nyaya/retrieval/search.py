@@ -98,9 +98,7 @@ async def search(
     # a model need the parent to read the obligation correctly.
     await load_context(session, results)
 
-    return RetrievalResult(
-        results=results, dense_count=len(dense), lexical_count=len(lexical)
-    )
+    return RetrievalResult(results=results, dense_count=len(dense), lexical_count=len(lexical))
 
 
 __all__ = ["SearchOptions", "search"]

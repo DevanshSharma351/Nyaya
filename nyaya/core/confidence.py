@@ -115,9 +115,7 @@ def fuse(components: ConfidenceComponents) -> Confidence:
         CORROBORATION_WEIGHTS["retrieval"] * components.retrieval
         + CORROBORATION_WEIGHTS["consistency"] * components.consistency
     )
-    score = components.entailment * (
-        ENTAILMENT_SHARE + (1.0 - ENTAILMENT_SHARE) * corroboration
-    )
+    score = components.entailment * (ENTAILMENT_SHARE + (1.0 - ENTAILMENT_SHARE) * corroboration)
 
     reasons: list[str] = []
     if components.entailment < 0.5:

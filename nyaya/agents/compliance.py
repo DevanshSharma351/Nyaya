@@ -332,14 +332,11 @@ async def _validate(
     mapping.entailment_verified = verdict.verified
 
     if not verdict.verified:
-        mapping.review_reasons.append(
-            "entailment could not be checked (no NLI model available)"
-        )
+        mapping.review_reasons.append("entailment could not be checked (no NLI model available)")
     elif verdict.relation is EvidenceRelation.CONTRADICTS and verdict.score > 0.8:
         # A confident contradiction is a substantive finding, not mere doubt.
         mapping.rejections.append(
-            f"the cited clause appears to contradict the requirement "
-            f"(score={verdict.score:.2f})"
+            f"the cited clause appears to contradict the requirement (score={verdict.score:.2f})"
         )
     elif not verdict.supports:
         mapping.review_reasons.append(
