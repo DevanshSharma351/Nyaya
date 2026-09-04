@@ -1,0 +1,34 @@
+# python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# env / secrets
+.env
+.env.*
+!.env.example
+
+# node
+node_modules/
+.next/
+out/
+
+# data & models
+knowledge_base/raw/*
+!knowledge_base/raw/.gitkeep
+knowledge_base/processed/*
+!knowledge_base/processed/.gitkeep
+models/
+*.duckdb
+
+# eval outputs
+eval_runs/
+
+# os
+.DS_Store
