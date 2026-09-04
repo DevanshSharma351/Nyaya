@@ -113,8 +113,12 @@ async def ingest_document(
             document_id=document.id,
             citation_key=node.citation_key,
             clause_number=node.number,
-            heading=node.heading,
-            text=node.text or (node.heading or ""),
+            # Only record a heading when it is distinct from the body, so
+            # `Clause.display` cannot repeat it.
+            heading=node.heading
+            if not (node.text or "").startswith(node.heading or "\x00")
+            else None,
+            text=_clause_text(node) or (node.heading or ""),
             depth=node.depth,
             ordinal=node.ordinal,
             char_start=node.char_start,
@@ -163,13 +167,27 @@ async def ingest_document(
 def _embedding_text(node: ClauseNode) -> str:
     """The text a clause is embedded as.
 
-    The heading is prepended because a sub-clause such as `(a) identify the
-    customer` is close to meaningless in isolation; its parent heading carries
-    the subject the obligation attaches to. Embedding the bare body would place
-    dozens of `(a)` clauses in nearly the same region of the space.
+    The heading is prepended only when it is genuinely a heading. For a
+    sub-clause the splitter records the remainder of the marker line as
+    `heading`, and that same text also opens `text` - so concatenating them
+    duplicated the sentence, wasting tokens and skewing both the embedding and
+    the entailment premise.
     """
-    parts = [p for p in (node.heading, node.text) if p]
-    return "\n".join(parts) or (node.number or "")
+    return _clause_text(node) or (node.number or "")
+
+
+def _clause_text(node: ClauseNode) -> str:
+    """The clause body, de-duplicated and unwrapped.
+
+    Source documents are hard-wrapped, so a clause arrives with newlines mid
+    sentence. Unwrapping matters because the text becomes an NLI premise and a
+    retrieval unit, and both read it as prose.
+    """
+    text = " ".join((node.text or "").split())
+    heading = " ".join((node.heading or "").split())
+    if heading and text.startswith(heading):
+        return text  # heading is the opening of the body, not a separate line
+    return f"{heading} {text}".strip() if heading else text
 
 
 __all__ = ["IngestionReport", "ingest_document"]

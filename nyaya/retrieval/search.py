@@ -23,6 +23,7 @@ from nyaya.retrieval.hybrid import (
     Retrieved,
     dense_search,
     lexical_search,
+    load_context,
     reciprocal_rank_fusion,
 )
 from nyaya.retrieval.rerank import available as reranker_available
@@ -91,7 +92,15 @@ async def search(
     else:
         results = shortlist[: opts.top_k]
 
-    return RetrievalResult(results=results, dense_count=len(dense), lexical_count=len(lexical))
+    # Attach enclosing clauses. A leaf sub-clause is frequently meaningless
+    # alone - "screening shall be performed prior to activation" never says what
+    # is screened against - so both entailment checking and the evidence shown to
+    # a model need the parent to read the obligation correctly.
+    await load_context(session, results)
+
+    return RetrievalResult(
+        results=results, dense_count=len(dense), lexical_count=len(lexical)
+    )
 
 
 __all__ = ["SearchOptions", "search"]

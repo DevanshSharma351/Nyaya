@@ -22,6 +22,7 @@ calibration and is robust to either retriever producing a wild score.
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass, field
 
@@ -45,6 +46,18 @@ RRF_K = 60
 # grows.
 DEFAULT_FUSION_WEIGHTS = (1.0, 0.0)
 
+# Regulatory hierarchies are shallow (part > chapter > section > sub-clause), so
+# this bounds the upward walk without truncating a real chain.
+MAX_ANCESTOR_DEPTH = 5
+
+# Organisational divisions carry a title, not an obligation. They are already
+# transparent to citation - nobody cites "Chapter IV, section 16" - and they must
+# be transparent to context for the same reason: including one prepends a bare
+# heading such as "SCREENING AND REPORTING" to the entailment premise, which
+# adds no obligation and measurably dilutes the signal. Clause 22 scored
+# `supports` 0.646 alone and `neutral` 0.427 with its chapter attached.
+_ORGANISATIONAL = re.compile(r"^\s*(?:chapter|part|title)\b", re.I)
+
 
 @dataclass(slots=True)
 class Retrieved:
@@ -64,10 +77,29 @@ class Retrieved:
     fused_score: float = 0.0
     rerank_score: float | None = None
 
+    ancestors: list[str] = field(default_factory=list)
+    """Text of enclosing clauses, outermost first. Populated by `load_context`."""
+
     @property
     def display(self) -> str:
         """Heading plus body, as shown to a model or a reader."""
         return f"{self.heading}\n{self.text}" if self.heading else self.text
+
+    @property
+    def contextual(self) -> str:
+        """The clause together with its enclosing clauses.
+
+        A leaf sub-clause is frequently meaningless alone: `22(a)` reads
+        "screening shall be performed prior to activation", which never says
+        what is being screened against - that is in the parent. Measured on
+        exactly that pair, the sub-clause alone entailed the requirement at
+        0.004 while the clause with its parent entailed it at 0.994.
+
+        So this, not `display`, is what should be used as an entailment premise
+        and as evidence shown to a model. `display` remains for citation
+        rendering, where the quoted span must be the clause itself.
+        """
+        return " ".join([*self.ancestors, self.display]).strip()
 
 
 @dataclass(slots=True)
@@ -282,6 +314,62 @@ async def hybrid_search(
     return RetrievalResult(results=fused, dense_count=len(dense), lexical_count=len(lexical))
 
 
+async def load_context(session: AsyncSession, items: list[Retrieved]) -> None:
+    """Populate `ancestors` on each item by walking the clause hierarchy upward.
+
+    Ancestors are fetched level by level rather than per item, so the number of
+    queries is bounded by hierarchy depth instead of by result count.
+    """
+    if not items:
+        return
+
+    by_id = {item.clause_id: item for item in items}
+    chains: dict[uuid.UUID, list[str]] = {item.clause_id: [] for item in items}
+    # clause id currently being resolved -> the results awaiting its ancestors
+    frontier: dict[uuid.UUID, list[uuid.UUID]] = {
+        item.clause_id: [item.clause_id] for item in items
+    }
+
+    for _ in range(MAX_ANCESTOR_DEPTH):
+        if not frontier:
+            break
+
+        rows = (
+            await session.execute(
+                select(Clause.id, Clause.parent_id).where(Clause.id.in_(frontier.keys()))
+            )
+        ).all()
+
+        owners_by_parent: dict[uuid.UUID, list[uuid.UUID]] = {}
+        for clause_id, parent_id in rows:
+            if parent_id is None:
+                continue
+            owners_by_parent.setdefault(parent_id, []).extend(frontier[clause_id])
+
+        if not owners_by_parent:
+            break
+
+        parent_rows = (
+            await session.execute(
+                select(
+                    Clause.id, Clause.heading, Clause.text, Clause.clause_number
+                ).where(Clause.id.in_(owners_by_parent.keys()))
+            )
+        ).all()
+
+        for parent_id, heading, text, number in parent_rows:
+            if number and _ORGANISATIONAL.match(number):
+                continue  # a division heading, not an obligation
+            body = f"{heading} {text}".strip() if heading else (text or "")
+            for owner_id in owners_by_parent[parent_id]:
+                chains[owner_id].insert(0, body)
+
+        frontier = owners_by_parent
+
+    for clause_id, chain in chains.items():
+        by_id[clause_id].ancestors = [c for c in chain if c]
+
+
 async def resolve_citation(session: AsyncSession, citation_key: str) -> Retrieved | None:
     """Look up a clause by its exact citation key.
 
@@ -304,12 +392,14 @@ async def resolve_citation(session: AsyncSession, citation_key: str) -> Retrieve
 
 __all__ = [
     "DEFAULT_FUSION_WEIGHTS",
+    "MAX_ANCESTOR_DEPTH",
     "RRF_K",
     "RetrievalResult",
     "Retrieved",
     "dense_search",
     "hybrid_search",
     "lexical_search",
+    "load_context",
     "reciprocal_rank_fusion",
     "resolve_citation",
 ]

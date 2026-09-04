@@ -1,0 +1,244 @@
+# Mandatory controls for digital customer onboarding / eKYC in India.
+#
+# Every control cites the clause that establishes it. A control without a
+# citation is rejected at load time: an unciteable control is an assertion, not
+# a compliance obligation, and enforcing one would be exactly the unfounded
+# claim this system exists to prevent.
+#
+# `applies_when` decides whether a control is required for a project.
+# `satisfied_when` decides whether a given requirement discharges it. They are
+# separate because "this is required here" and "this requirement covers it" are
+# different questions, and conflating them hides gaps.
+
+name: eKYC onboarding controls (India)
+version: "1"
+jurisdiction: IN
+domain: ekyc_onboarding
+
+controls:
+  - id: KYC.CDD.IDENTIFY
+    title: Identify and verify the customer
+    description: >
+      The customer's identity must be established from reliable, independent
+      source documents before the relationship begins.
+    citations: ["RBI-MD-KYC:16(a)", "RBI-MD-KYC:10"]
+    severity: blocker
+    tags: [cdd, identity]
+    applies_when:
+      - domain_is: [ekyc_onboarding]
+    satisfied_when:
+      - text_matches: "verif|identif|authenticat"
+      - category_any: [functional, regulatory, security]
+
+  - id: KYC.CDD.BENEFICIAL-OWNER
+    title: Identify the beneficial owner
+    description: >
+      For a legal person, the natural person who ultimately owns or controls the
+      customer must be identified and their identity verified.
+    citations: ["RBI-MD-KYC:16(b)"]
+    severity: blocker
+    tags: [cdd, ownership]
+    applies_when:
+      - domain_is: [ekyc_onboarding]
+    satisfied_when:
+      - text_matches: "beneficial owner|ownership structure|ultimate owner"
+
+  - id: KYC.CDD.PURPOSE
+    title: Record the purpose of the relationship
+    citations: ["RBI-MD-KYC:16(c)"]
+    severity: major
+    tags: [cdd]
+    applies_when:
+      - domain_is: [ekyc_onboarding]
+    satisfied_when:
+      - text_matches: "purpose|intended nature|nature of the (business )?relationship"
+
+  - id: KYC.SCREEN.SANCTIONS
+    title: Screen against designated-persons lists before activation
+    description: >
+      Screening must complete before the account can transact, and a match must
+      block activation and be reported.
+    citations: ["RBI-MD-KYC:22(a)", "RBI-MD-KYC:22"]
+    severity: blocker
+    tags: [screening, aml]
+    applies_when:
+      - domain_is: [ekyc_onboarding]
+    satisfied_when:
+      - text_matches: "screen|sanction|designated person|watchlist|designated-persons"
+
+  - id: KYC.SCREEN.ONGOING
+    title: Re-screen the customer base when lists change
+    citations: ["RBI-MD-KYC:22(c)"]
+    severity: major
+    tags: [screening, aml]
+    applies_when:
+      - domain_is: [ekyc_onboarding]
+    satisfied_when:
+      - text_matches: "re-?screen|ongoing screen|list.{0,20}updat|updat.{0,20}list"
+
+  - id: KYC.RISK.CATEGORISE
+    title: Assign and periodically review a customer risk category
+    citations: ["RBI-MD-KYC:17", "RBI-MD-KYC:17(c)"]
+    severity: major
+    tags: [risk]
+    applies_when:
+      - domain_is: [ekyc_onboarding]
+    satisfied_when:
+      - text_matches: "risk categor|risk rating|risk classif|low.{0,5}medium.{0,5}high"
+
+  - id: KYC.RISK.NO-DISCLOSURE
+    title: Do not disclose the risk category to the customer
+    description: >
+      A prohibition rather than a duty. Requirements that would expose the risk
+      rating to the customer conflict with this control.
+    citations: ["RBI-MD-KYC:17(b)"]
+    severity: blocker
+    tags: [risk, prohibition]
+    applies_when:
+      - domain_is: [ekyc_onboarding]
+    satisfied_when:
+      - text_matches: "not.{0,30}disclos|shall not.{0,40}(show|display|reveal|communicat)"
+
+  - id: KYC.EDD.PEP
+    title: Senior-management approval for politically exposed persons
+    citations: ["RBI-MD-KYC:18(a)"]
+    severity: blocker
+    tags: [edd]
+    applies_when:
+      - domain_is: [ekyc_onboarding]
+    satisfied_when:
+      - text_matches: "politically exposed|PEP\\b|senior.{0,15}(management|approval)"
+
+  - id: KYC.VCIP.LIVENESS
+    title: Liveness detection in video-based identification
+    description: >
+      The video process must establish that the customer is physically present
+      and defeat replay of recorded media.
+    citations: ["RBI-MD-KYC:12(c)"]
+    severity: blocker
+    tags: [vcip, fraud]
+    applies_when:
+      - domain_is: [ekyc_onboarding]
+    satisfied_when:
+      - text_matches: "liveness|physically present|replay|spoof|presentation attack"
+
+  - id: KYC.VCIP.RECORDING
+    title: Record the video session with a date and time stamp
+    citations: ["RBI-MD-KYC:12(a)"]
+    severity: major
+    tags: [vcip, evidence]
+    applies_when:
+      - domain_is: [ekyc_onboarding]
+    satisfied_when:
+      - text_matches: "record.{0,30}(session|video)|time.?stamp|date and time"
+
+  - id: KYC.VCIP.GEOLOCATION
+    title: Restrict the session to a domestic IP and capture coordinates
+    citations: ["RBI-MD-KYC:12(e)"]
+    severity: major
+    tags: [vcip]
+    applies_when:
+      - domain_is: [ekyc_onboarding]
+    satisfied_when:
+      - text_matches: "geo.?location|coordinat|domestic.{0,15}IP|IP address"
+
+  - id: KYC.CONSENT.EXPLICIT
+    title: Obtain explicit consent before electronic verification
+    citations: ["RBI-MD-KYC:13", "DPDP-2023:6"]
+    severity: blocker
+    tags: [consent, privacy]
+    applies_when:
+      - domain_is: [ekyc_onboarding]
+    satisfied_when:
+      - text_matches: "consent"
+
+  - id: KYC.CONSENT.WITHDRAWAL
+    title: Consent must be as easy to withdraw as to give
+    citations: ["DPDP-2023:6(b)"]
+    severity: major
+    tags: [consent, privacy]
+    applies_when:
+      - domain_is: [ekyc_onboarding]
+      - jurisdiction_any: [IN]
+    satisfied_when:
+      - text_matches: "withdraw.{0,30}consent|revoke.{0,20}consent"
+
+  - id: KYC.RECORDS.RETENTION
+    title: Retain identification records for five years after the relationship ends
+    citations: ["RBI-MD-KYC:26(a)"]
+    severity: blocker
+    tags: [records]
+    applies_when:
+      - domain_is: [ekyc_onboarding]
+    satisfied_when:
+      - text_matches: "retain|retention|preserve"
+
+  - id: KYC.SECURITY.ACCESS-CONTROL
+    title: Restrict and log access to customer identification records
+    citations: ["RBI-MD-KYC:27(a)"]
+    severity: blocker
+    tags: [security, audit]
+    applies_when:
+      - domain_is: [ekyc_onboarding]
+    satisfied_when:
+      - text_matches: "access control|restrict.{0,25}access|role.?based|least privilege"
+
+  - id: KYC.SECURITY.ENCRYPTION
+    title: Encrypt customer information in transit and at rest
+    citations: ["RBI-MD-KYC:27(b)", "GDPR:Article 32.1(a)"]
+    severity: blocker
+    tags: [security]
+    applies_when:
+      - domain_is: [ekyc_onboarding]
+    satisfied_when:
+      - text_matches: "encrypt|cryptograph|TLS|at rest"
+
+  - id: KYC.AUDIT.TRAIL
+    title: Preserve an audit trail of electronic verification
+    citations: ["RBI-MD-KYC:13(c)"]
+    severity: major
+    tags: [audit]
+    applies_when:
+      - domain_is: [ekyc_onboarding]
+    satisfied_when:
+      - text_matches: "audit trail|audit log|log.{0,20}(access|event|action)|traceab"
+
+  - id: KYC.STR.NO-TIPPING-OFF
+    title: Do not tell the customer a suspicious transaction report was filed
+    citations: ["RBI-MD-KYC:23(b)"]
+    severity: blocker
+    tags: [aml, prohibition]
+    applies_when:
+      - domain_is: [ekyc_onboarding]
+    satisfied_when:
+      - text_matches: "not.{0,40}(disclos|notify|inform|tip)"
+
+  - id: PRIV.BREACH.NOTIFY
+    title: Notify the Board and affected principals of a personal data breach
+    citations: ["DPDP-2023:8(c)", "GDPR:Article 33.1"]
+    severity: blocker
+    tags: [privacy, incident]
+    applies_when:
+      - domain_is: [ekyc_onboarding]
+    satisfied_when:
+      - text_matches: "breach.{0,30}notif|notif.{0,30}breach|incident.{0,20}report"
+
+  - id: PRIV.MINIMISE
+    title: Collect only the personal data necessary for the stated purpose
+    citations: ["GDPR:Article 5.1(c)", "DPDP-2023:6(a)"]
+    severity: major
+    tags: [privacy]
+    applies_when:
+      - domain_is: [ekyc_onboarding]
+    satisfied_when:
+      - text_matches: "minimis|minimiz|only.{0,25}necessary|limited to what is necessary"
+
+  - id: PRIV.ERASURE
+    title: Erase personal data on withdrawal of consent unless retention is required
+    citations: ["DPDP-2023:8(d)", "DPDP-2023:12(b)"]
+    severity: major
+    tags: [privacy, records]
+    applies_when:
+      - domain_is: [ekyc_onboarding]
+    satisfied_when:
+      - text_matches: "eras|delet|purg"

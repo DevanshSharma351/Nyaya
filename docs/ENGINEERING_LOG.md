@@ -864,3 +864,141 @@ fails on some future input, the defect is still caught and recorded.
   roughly doubles it.
 
 **State: 96 tests passing, ruff clean, mypy clean across 44 source files.**
+
+---
+
+## 2026-09-04 — Compliance mapping: the model proposes, the validator disposes
+
+The centrepiece. A requirement is mapped to the regulatory controls it
+satisfies, with citations that are **checked rather than trusted**.
+
+The pipeline is deliberately adversarial toward its own model:
+
+1. **Retrieve** candidate clauses, scoped to jurisdiction and to sources in force.
+2. **Seed deterministically** — the rule engine proposes which controls a
+   requirement appears to satisfy, so the model is asked to *confirm and cite*
+   rather than invent from nothing.
+3. **The model proposes** a mapping with a citation key and a quotation.
+4. **The validator disposes** — the citation must resolve to a real clause, the
+   quoted text must actually appear in it, and the clause must entail the
+   requirement under NLI.
+5. **Confidence is computed** from those independent signals, never reported by
+   the model.
+
+The gap between proposed and accepted is a headline metric: it measures directly
+how much the grounding machinery is doing.
+
+### Built
+
+- **`nli.py`** — entailment checking. This is what turns "the model says this
+  clause supports the requirement" into "the clause was checked and does".
+- **`rules/dsl.py` + `rules/engine.py`** — a small declarative rule language and
+  its evaluator. Rules live in versioned YAML, not code: diffable, `git blame`-able,
+  and readable by the compliance officers accountable for the obligations they
+  encode. A control **without a citation is rejected at load time** — an
+  unciteable control is an assertion, not an obligation.
+- **`rules/compliance/ekyc-in.yaml`** — 21 controls (12 blocker, 9 major), every
+  one traced to a clause. `applies_when` and `satisfied_when` are separate,
+  because "required here" and "this requirement discharges it" are different
+  questions and conflating them hides gaps.
+- **`core/confidence.py`** — fusion over four independent signals.
+- **`agents/compliance.py`** — the agent.
+
+### The finding that took three fixes: NLI does not transfer to requirements
+
+First end-to-end run: **0 % acceptance on a correct mapping.** The model proposed
+the right control with the right citation; the citation resolved; the quote
+verified; and the entailment check rejected it at 0.01.
+
+A validator that rejects correct citations is worse than no validator, because it
+trains reviewers to override it.
+
+**Fix 1 — the hypothesis was in the wrong register.** MNLI models are trained on
+declarative factual pairs. An EARS requirement — "When a customer is onboarded
+remotely, the system shall screen…" — reads to such a model as a conditional
+prescription about some particular system, not a claim the premise could entail.
+
+Measured on one correct clause-requirement pair:
+
+| hypothesis form | verdict |
+|---|---|
+| raw EARS | `contradicts` 0.003 |
+| "The regulation requires screening…" | `supports` 0.994 |
+
+So requirements are now restated as declarative obligation claims before
+checking. **This is necessary, not cosmetic.**
+
+**Fix 2 — the actor must be dropped, decided by measurement.** A requirement
+names the software ("the system"); a regulation names the institution ("the
+Regulated Entity"). Those subjects differ *by design*, and NLI reads the mismatch
+as evidence against entailment. Over matched and mismatched pairs:
+
+| framing | correct (min) | wrong (max) | separation |
+|---|---|---|---|
+| keep the actor | 0.404 | 0.046 | +0.358 |
+| **drop the actor** | **0.769** | 0.043 | **+0.726** |
+
+Dropping it doubles the margin without raising any wrong citation's score. The
+result reads ungrammatically ("It is required that screen the customer"), which
+does not trouble the model and is never shown to a user. The threshold (0.55)
+now sits in a measured gap rather than being guessed.
+
+**Fix 3 — sub-clauses need their parent.** `22(a)` reads "screening shall be
+performed prior to activation" and never says *what is screened against* — that
+is in the parent. Alone it entailed the requirement at **0.004**; with its
+parent, at **0.996**.
+
+The clause splitter's docstring had claimed the hierarchy exists so "retrieval
+can walk upward for interpretive context". It was designed for and never
+implemented. Now it is: `load_context` walks ancestors level by level, so query
+count is bounded by hierarchy depth rather than result count.
+
+**Fix 3a — organisational divisions must be transparent to context too.**
+Attaching a chapter prepends a bare title like "SCREENING AND REPORTING" to the
+premise, which obliges nothing and dilutes the signal: clause 22 scored
+`supports` 0.646 alone and `neutral` 0.427 with its chapter attached. Parts and
+chapters were already transparent to *citation* for the same underlying reason;
+they are now transparent to context as well.
+
+### Bug found along the way — clause text was duplicated and hard-wrapped
+
+`Clause.display` repeated its own opening sentence: for a sub-clause the splitter
+records the remainder of the marker line as `heading`, and that same text also
+opens `text`, so concatenating them duplicated it. Source documents are also
+hard-wrapped, leaving newlines mid-sentence.
+
+Both wasted tokens and degraded the embedding and the entailment premise. Fixed
+in the ingestion pipeline: the heading is recorded only when genuinely distinct,
+and clause text is unwrapped.
+
+### After the fixes
+
+| requirement | outcome |
+|---|---|
+| screening before activation | **2 proposed, 2 accepted**, confidence 0.94 / 0.78 |
+| retention of screening evidence | 1 proposed, **rejected** at 0.39 entailment |
+| display risk rating to customer | 1 proposed, **rejected**; **conflict detected** |
+
+The second is arguably a *correct* rejection: the cited clause obliges retention
+of **identity records from cessation of the relationship**, while the requirement
+concerns **screening evidence from the screening date**. Different artefact,
+different clock. A compliance officer would make exactly that distinction.
+
+The third is the behaviour the design is for. The model declined to map the
+requirement to a control it does not satisfy, *and* reported that displaying a
+risk rating would **breach** `RBI-MD-KYC:17(b)`, which prohibits disclosing the
+category to the customer. Detecting that a requirement violates a regulation is
+worth more than mapping one that complies.
+
+### Honest notes
+
+- Three requirements is an anecdote, not an evaluation. A labelled
+  requirement-to-control set is needed before any acceptance-rate number means
+  anything, and that is the next measurement to build.
+- The 0.55 threshold is set from **one** measured separation on four clause
+  pairs. It needs a proper sweep with a precision/recall curve.
+- Compliance mapping costs **40–95 s** per requirement locally.
+- Confidence weights are reasoned, not fitted. Fitting them requires the
+  labelled set above, after which the calibration curve becomes meaningful.
+
+**State: 128 tests passing, ruff clean, mypy clean across 50 source files.**
