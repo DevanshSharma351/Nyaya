@@ -10,7 +10,7 @@ from __future__ import annotations
 from enum import StrEnum
 from functools import lru_cache
 
-from pydantic import Field, PostgresDsn, computed_field
+from pydantic import BaseModel, Field, PostgresDsn, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -32,11 +32,17 @@ class ModelRole(StrEnum):
     """Dense vector generation for retrieval."""
 
 
-class ModelSpec(BaseSettings):
-    """A resolved `provider:model` pair."""
+class ModelSpec(BaseModel):
+    """A resolved `provider:model` pair.
 
-    provider: str
-    model: str
+    Deliberately a plain `BaseModel`, not `BaseSettings`. As a settings class it
+    would treat `provider` and `model` as environment-backed fields, so a stray
+    `PROVIDER` or `MODEL` variable in the environment would silently populate a
+    spec that was never parsed from configuration.
+    """
+
+    provider: str = Field(min_length=1)
+    model: str = Field(min_length=1)
 
     @classmethod
     def parse(cls, raw: str) -> ModelSpec:
@@ -46,7 +52,7 @@ class ModelSpec(BaseSettings):
         `qwen3:8b`), so only the first colon is a separator.
         """
         provider, sep, model = raw.partition(":")
-        if not sep or not model:
+        if not sep or not model.strip() or not provider.strip():
             raise ValueError(
                 f"Invalid model spec {raw!r}; expected 'provider:model' "
                 f"(e.g. 'ollama:qwen3:8b' or 'gemini:gemini-2.0-flash')"

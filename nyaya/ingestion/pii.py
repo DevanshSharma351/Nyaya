@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import lru_cache
 
@@ -83,7 +84,7 @@ class Recogniser:
 
     entity_type: str
     pattern: re.Pattern[str]
-    validator: object | None = None
+    validator: Callable[[str], bool] | None = None
     normalise: bool = False
     """Strip separators before validating - Aadhaar is written both as
     `1234 5678 9012` and `123456789012`."""

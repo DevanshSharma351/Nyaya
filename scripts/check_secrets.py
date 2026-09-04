@@ -49,7 +49,9 @@ BENIGN_VALUES = re.compile(
       | \.{3} | x{3,} | \*{3,} | <[^>]+>       # <your-key-here>
       | .*_dev_pw | admin | postgres | nyaya
       | os\.environ.* | os\.getenv.* | settings\..* | self\..*
-      | \$\{.*\} | \{\{.*\}\}                   # ${VAR} / {{ var }} interpolation
+      | \$\{.* | \{\{.*                         # ${VAR:-default} / {{ var }} interpolation
+                                                  # (the capture truncates at the
+                                                  #  closing brace, so no anchor)
     )$
     """
 )

@@ -71,20 +71,61 @@ class EchoProvider(LLMProvider):
         return True
 
 
+_SCALAR_DEFAULTS: dict[str, Any] = {
+    "string": "",
+    "integer": 0,
+    "number": 0.0,
+    "boolean": False,
+    "array": [],
+    "object": {},
+    "null": None,
+}
+
+
 def _minimal_instance(schema: type[BaseModel]) -> dict[str, Any]:
-    """Build the smallest JSON object satisfying a model's required fields."""
-    defaults: dict[str, Any] = {
-        "string": "",
-        "integer": 0,
-        "number": 0.0,
-        "boolean": False,
-        "array": [],
-        "object": {},
-    }
+    """Build the smallest JSON object satisfying a model's required fields.
+
+    Must honour enums and nested models, not just scalars: nearly every schema
+    in this project constrains fields to a closed vocabulary, and a default of
+    `""` fails validation against one. A test double that cannot instantiate
+    the project's own schemas is useless as a fixture or as an eval control arm.
+    """
     spec = schema.model_json_schema()
-    required = spec.get("required", [])
+    defs = spec.get("$defs", {})
     props = spec.get("properties", {})
-    return {k: defaults.get(props.get(k, {}).get("type", "string")) for k in required}
+    return {name: _value_for(props.get(name, {}), defs) for name in spec.get("required", [])}
+
+
+def _value_for(prop: dict[str, Any], defs: dict[str, Any], depth: int = 0) -> Any:
+    """Smallest value satisfying one property schema."""
+    if depth > 6:  # guard against a self-referential schema
+        return None
+
+    if "$ref" in prop:
+        return _value_for(defs.get(prop["$ref"].rsplit("/", 1)[-1], {}), defs, depth + 1)
+
+    # anyOf / oneOf is how Optional[...] and unions are emitted. Prefer a
+    # non-null branch so a required union still receives a usable value.
+    for key in ("anyOf", "oneOf"):
+        if key in prop:
+            options = prop[key]
+            chosen = next((o for o in options if o.get("type") != "null"), options[0])
+            return _value_for(chosen, defs, depth + 1)
+
+    if "enum" in prop:
+        return prop["enum"][0]
+    if "const" in prop:
+        return prop["const"]
+
+    kind = prop.get("type")
+    if not isinstance(kind, str):
+        return None
+    if kind == "array":
+        return []
+    if kind == "object" or "properties" in prop:
+        nested = prop.get("properties", {})
+        return {n: _value_for(nested.get(n, {}), defs, depth + 1) for n in prop.get("required", [])}
+    return _SCALAR_DEFAULTS.get(kind)
 
 
 __all__ = ["EchoProvider"]

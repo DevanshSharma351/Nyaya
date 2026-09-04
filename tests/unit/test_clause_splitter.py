@@ -7,6 +7,8 @@ splitter's whole purpose is to survive those conventions.
 
 from __future__ import annotations
 
+from itertools import pairwise
+
 import pytest
 
 from nyaya.ingestion.clause_splitter import flatten, split_clauses
@@ -148,3 +150,59 @@ def test_paren_styles(marker, expected):
     text = f"1. Heading\n{marker} the sub-clause text here;\n"
     keys = [n.citation_key for n in flatten(split_clauses(text, short_code="X"))]
     assert expected in keys
+
+
+# --- regressions ----------------------------------------------------------
+
+
+def test_sibling_spans_do_not_overlap():
+    """A clause ends where its successor begins.
+
+    Regression: `char_end` was taken from the current read position, which had
+    already advanced past the line that closed the clause - so every span
+    swallowed the first line of the next clause and siblings overlapped. A
+    citation highlighted in the source would have shown the wrong text.
+    """
+    doc = "16. Heading\nBody line.\n(a) first sub;\n(b) second sub;\n17. Next\n"
+    nodes = flatten(split_clauses(doc, short_code="X"))
+
+    by_depth: dict[int, list] = {}
+    for n in nodes:
+        by_depth.setdefault(n.depth, []).append(n)
+
+    for siblings in by_depth.values():
+        ordered = sorted(siblings, key=lambda n: n.char_start)
+        for a, b in pairwise(ordered):
+            assert a.char_end <= b.char_start, (
+                f"{a.citation_key} [{a.char_start},{a.char_end}) overlaps "
+                f"{b.citation_key} [{b.char_start},{b.char_end})"
+            )
+
+
+def test_parent_span_contains_children():
+    doc = "16. Heading\nBody.\n(a) one;\n(b) two;\n17. Next\n"
+    for node in flatten(split_clauses(doc, short_code="X")):
+        for child in node.children:
+            assert node.char_start <= child.char_start
+            assert child.char_end <= node.char_end
+
+
+def test_bare_marker_with_heading_on_next_line():
+    """Typeset regulations often put the number alone on its own line.
+
+    Regression: the section pattern required trailing text on the same line, so
+    such clauses fell through to the preamble and became uncitable.
+    """
+    doc = "16.\nCustomer Due Diligence\nThe RE shall undertake CDD.\n"
+    nodes = flatten(split_clauses(doc, short_code="X"))
+    assert "X:16" in [n.citation_key for n in nodes]
+    section = next(n for n in nodes if n.citation_key == "X:16")
+    assert "Customer Due Diligence" in section.text
+
+
+@pytest.mark.parametrize(
+    "doc",
+    ["", "   \n\n  \n", "prose with no numbering\n", "16.\n", "5. Five\n2. Two\n"],
+)
+def test_degenerate_documents_do_not_raise(doc):
+    split_clauses(doc, short_code="X")

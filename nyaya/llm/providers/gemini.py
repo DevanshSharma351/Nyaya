@@ -58,8 +58,13 @@ class GeminiProvider(LLMProvider):
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=30), reraise=True)
     async def _generate(self, contents: Any, config: dict[str, Any]) -> Any:
+        # The SDK accepts a plain dict here and coerces it internally; the
+        # typed config object is not used so that this adapter stays a thin
+        # translation layer over the shared interface.
         return await self._client.aio.models.generate_content(
-            model=self.model, contents=contents, config=config
+            model=self.model,
+            contents=contents,
+            config=config,  # type: ignore[arg-type]
         )
 
     async def complete(
@@ -121,7 +126,11 @@ class GeminiProvider(LLMProvider):
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         response = await self._client.aio.models.embed_content(model=self.model, contents=texts)
-        return [e.values for e in response.embeddings]
+        embeddings = response.embeddings or []
+        vectors = [list(e.values) for e in embeddings if e.values is not None]
+        if len(vectors) != len(texts):
+            raise LLMError(f"Gemini returned {len(vectors)} embeddings for {len(texts)} inputs")
+        return vectors
 
 
 __all__ = ["GeminiProvider"]

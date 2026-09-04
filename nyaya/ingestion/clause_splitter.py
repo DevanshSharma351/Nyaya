@@ -63,7 +63,9 @@ MARKER_STYLES: tuple[MarkerStyle, ...] = (
     MarkerStyle(
         "section",
         2,
-        re.compile(r"^\s*(?:Section\s+)?(?P<num>\d+[A-Za-z]?)\.\s+(?P<rest>\S.*)$"),
+        # `rest` is optional: typeset regulations frequently place the clause
+        # number alone on one line with its heading on the next.
+        re.compile(r"^\s*(?:Section\s+)?(?P<num>\d+[A-Za-z]?)\.(?:\s+(?P<rest>\S.*))?$"),
     ),
     MarkerStyle(
         "dotted",
@@ -146,7 +148,7 @@ def _match_marker(line: str, roman_open: bool) -> tuple[MarkerStyle, str, str] |
 
         label = m.groupdict().get("label")
         number = f"{label.title()} {num}" if label else num
-        return style, number, m.group("rest").strip()
+        return style, number, (m.group("rest") or "").strip()
     return None
 
 
@@ -167,12 +169,18 @@ def split_clauses(text: str, *, short_code: str) -> list[ClauseNode]:
     offset = 0
     counters: dict[int, int] = {}
 
-    def close_to(tier: int) -> None:
-        """Close every open clause at or below `tier` in specificity."""
+    def close_to(tier: int, boundary: int) -> None:
+        """Close every open clause at or below `tier` in specificity.
+
+        `boundary` is the offset at which the closing clause *starts*, not the
+        current read position: a clause ends where its successor begins. Using
+        the read position would extend every span over the first line of the
+        next clause and make sibling spans overlap.
+        """
         while stack and stack[-1].tier >= tier:
             done = stack.pop()
             done.node.text = "\n".join(done.body).strip()
-            done.node.char_end = offset
+            done.node.char_end = boundary
 
     def roman_series_open() -> bool:
         return any(o.node.style == "paren_roman" for o in stack)
@@ -212,7 +220,7 @@ def split_clauses(text: str, *, short_code: str) -> list[ClauseNode]:
         style, number, rest = matched
         tier = _dotted_tier(number) if style.name == "dotted" else style.tier
 
-        close_to(tier)
+        close_to(tier, line_start)
 
         depth = len(stack)
         counters[depth] = counters.get(depth, 0) + 1
@@ -239,7 +247,7 @@ def split_clauses(text: str, *, short_code: str) -> list[ClauseNode]:
         # the obligation begins on the same line as its number.
         stack.append(_Open(node, tier=tier, body=[rest] if rest else []))
 
-    close_to(-1)
+    close_to(-1, offset)
     return roots
 
 

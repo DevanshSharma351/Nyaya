@@ -502,3 +502,111 @@ is absent, so callers degrade to pattern-only masking.
 check that masking leaves the surrounding requirement wording intact.
 
 **Suite total: 24 tests, all passing. Lint clean.**
+
+---
+
+## 2026-09-04 — Correctness audit of everything built so far
+
+Deliberate pause to attack the existing code before building on top of it.
+Static analysis first, then targeted probes at the places most likely to hide a
+defect. **Five real bugs found, all fixed, each pinned by a regression test.**
+
+Notably, the full test suite was green *before* this audit. Passing tests only
+demonstrate the absence of the failures you thought to write down.
+
+### Bug 1 — `ModelSpec` was environment-backed (config)
+
+`ModelSpec` inherited `BaseSettings`, so Pydantic treated `provider` and `model`
+as environment-sourced fields. `ModelSpec()` was constructible with **no
+arguments**, silently populated from stray `PROVIDER` / `MODEL` variables.
+
+*Why it matters:* model routing is the one thing the whole architecture rests on.
+A spec that can materialise from ambient environment state, rather than only from
+parsed configuration, undermines the guarantee that agents run on the model the
+configuration names.
+
+*Fix:* plain `BaseModel`, with `min_length=1` on both fields.
+
+### Bug 2 — empty provider accepted
+
+`ModelSpec.parse(":model")` yielded `provider=""`, which would fail later at
+provider lookup with a confusing error rather than at parse time.
+*Fix:* reject an empty provider or model half explicitly.
+
+### Bug 3 — the test double could not build the project's own schemas
+
+`EchoProvider` filled required fields from a scalar-type table, so an enum field
+received `""` and failed validation. **Nearly every schema in this project
+constrains fields to a closed vocabulary**, which made the double useless as a
+fixture — and, more seriously, useless as the eval harness's control arm.
+
+*Fix:* a schema walker honouring `$ref`, `$defs`, `enum`, `const`, `anyOf`/`oneOf`
+(preferring the non-null branch) and nested objects, with a recursion guard.
+
+### Bug 4 — clause spans overlapped their successors
+
+`char_end` was taken from the current read position, which had already advanced
+past the line that closed the clause. Every clause span therefore swallowed the
+first line of the next clause, and **sibling spans overlapped**:
+
+```
+X:16(a) [64,124)   span = '(a) first sub;\n(b) second sub;\n'
+X:16(b) [ 91,152)
+```
+
+*Why it matters:* character spans exist so a citation can be highlighted in the
+source document. Overlapping spans mean the highlight shows the wrong text —
+a citation that appears to support a claim by quoting its neighbour. This is
+precisely the failure the evidence architecture is meant to prevent, and it
+would have been invisible until someone read a rendered citation carefully.
+
+*Fix:* a clause ends where its successor *begins*; `close_to` now takes the
+boundary offset explicitly. Two regression tests: siblings never overlap, and a
+parent's span always contains its children's.
+
+### Bug 5 — bare clause markers were unrecognised
+
+The section pattern demanded text on the same line as the number, so `16.` with
+its heading on the following line — **common in typeset regulations** — fell
+through to the preamble and became uncitable.
+
+*Fix:* the trailing text is now optional.
+
+### Also fixed
+
+- **MinIO healthcheck was invalid.** It called `mc ready local`, but the server
+  image ships no `mc` client, so the container could never become healthy and
+  anything waiting on it would hang. Now probes the built-in
+  `/minio/health/live` endpoint — verified healthy in 11 s.
+- **All 4 mypy errors cleared** (`Callable` typing on the PII validators, and
+  Gemini's embedding response, which could return `None` and silently yield
+  fewer vectors than inputs — now raises instead).
+
+### Verified rather than assumed
+
+- **Ledger concurrency.** 20 concurrent appends from independent sessions:
+  0 errors, chain length 20, chain intact. The per-project advisory lock does
+  prevent forking under real contention, which was previously only argued.
+- **Clause splitter on degenerate input** — empty, whitespace-only, unnumbered,
+  marker-only, deeply dotted, out-of-order numbering: none raise.
+- **`mask_with_ner`** leaks no detected value into its output.
+
+### Observation for later
+
+Presidio pulled **`en_core_web_lg` (382 MB)** on first use without being asked.
+Worth pinning the spaCy model explicitly before this reaches a container image
+or a fresh clone.
+
+**State: 44 tests passing, ruff clean, mypy clean across 25 source files.**
+
+### Fourth scanner refinement
+
+The hook blocked this commit on `${KEYCLOAK_ADMIN_PASSWORD:-admin}` in
+`docker-compose.yml`. The interpolation exemption was anchored on a closing
+brace, but the value capture stops *at* that brace — so `${VAR:-default}` never
+matched the exemption. Anchor removed.
+
+That is four corrections to the scanner, every one found by running it rather
+than reading it. The pattern is consistent: each fix was a *narrowing* of an
+over-broad exemption or a *widening* of an over-narrow one, and none were
+visible by inspection.
