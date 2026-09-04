@@ -20,9 +20,37 @@ constrained in three ways:
    creating the duty has not established one, and the quotation is verified
    against the clause afterwards - the same check applied to the proposer.
 
-Whether this actually recovers recall without importing false confirmations is
-an empirical question, answered against the labelled set in
-`nyaya.eval.judge_eval`.
+Whether this recovers recall without importing false confirmations was an
+empirical question. **It was measured, and the answer is no.**
+
+Over the same 49 labelled pairs:
+
+| arm | precision | recall | false confirmations |
+|---|---|---|---|
+| NLI alone | 0.909 | 0.588 | **1** |
+| judge alone | 0.714 | 0.882 | 6 |
+| judge, quotation required | 0.786 | 0.647 | 3 |
+
+On the 38 pairs NLI could not confirm, the judge recovered 5 correct citations
+and newly confirmed 5 wrong ones - a one-for-one trade. F1 improves (0.714 to
+0.789) but F1 assumes symmetric costs, and these costs are not symmetric: a
+false confirmation is a fabricated compliance claim relied upon by people who
+cannot re-check it, while a false rejection is a correct citation shown to a
+human.
+
+The failures are instructive. The judge confirmed `RBI-MD-KYC:16(a)` (customer
+identity) for a beneficial-owner requirement, reasoning that identification "is
+part of due diligence", and `GDPR:Article 32.1(c)` (restoration of availability)
+for an encryption requirement, reasoning from "a general duty to implement
+security measures". It generalises from a parent duty to any obligation within
+its scope - which is precisely what the prompt's own concession about general
+duties invited.
+
+**So the judge does not confirm citations.** It annotates the `needs_review`
+band with an opinion and a quotation for the human deciding, and has no
+authority to accept. Its one demonstrated benefit is retained: requiring a
+verified quotation halved its false confirmations (6 to 3), which is the same
+constraint applied to the proposing model, doing the same work.
 """
 
 from __future__ import annotations
@@ -107,8 +135,35 @@ class JudgeResult:
 
     @property
     def obliges(self) -> bool:
-        """Whether the judge established an obligation *and* could point at it."""
+        """Whether the judge asserted an obligation *and* could point at it.
+
+        Advisory only. Measured at precision 0.786 even with the quotation
+        requirement, this is not accurate enough to auto-confirm a compliance
+        mapping; it is a reason for a human to look, not a verdict.
+        """
         return self.relation is EvidenceRelation.SUPPORTS and self.quote_verified
+
+    def as_review_note(self) -> str:
+        """The advisory line shown to whoever reviews this citation.
+
+        Attributed explicitly, because an unattributed machine opinion in a
+        review queue is indistinguishable from a verified finding, and a
+        reviewer who cannot tell them apart will eventually stop checking.
+        """
+        verdict = {
+            EvidenceRelation.SUPPORTS: "may oblige",
+            EvidenceRelation.NEUTRAL: "appears not to oblige",
+            EvidenceRelation.CONTRADICTS: "may conflict with",
+        }[self.relation]
+        anchor = (
+            f' quoting "{self.obliging_text}"'
+            if self.quote_verified
+            else " (could not point to obliging text)"
+        )
+        return (
+            f"AI reviewer opinion, unverified - the clause {verdict} this "
+            f"requirement{anchor}. {self.reasoning}"
+        )
 
 
 async def judge(

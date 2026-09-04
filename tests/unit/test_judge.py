@@ -80,3 +80,39 @@ async def test_quotation_check_tolerates_whitespace_and_case(quotation):
     """Models reflow and recase text; that is not fabrication."""
     override(ModelRole.REASONING, _canned("obliges", quotation))
     assert (await judge(CLAUSE, REQUIREMENT)).quote_verified
+
+
+# --- advisory framing -----------------------------------------------------
+#
+# Measurement showed the judge at precision 0.786 even with the quotation
+# requirement, and that on the band NLI could not confirm it recovered 5 correct
+# citations while newly confirming 5 wrong ones. It therefore annotates rather
+# than decides, and its output must be unmistakably attributed.
+
+
+async def test_review_note_is_attributed_as_unverified():
+    """An unattributed machine opinion in a review queue is indistinguishable
+    from a verified finding, and a reviewer who cannot tell them apart will
+    eventually stop checking."""
+    override(ModelRole.REASONING, _canned("obliges", "shall be protected by encryption"))
+    note = (await judge(CLAUSE, REQUIREMENT)).as_review_note()
+    assert "unverified" in note.lower()
+    assert "opinion" in note.lower()
+
+
+async def test_review_note_flags_a_missing_anchor():
+    override(ModelRole.REASONING, _canned("obliges", "text that is not in the clause"))
+    note = (await judge(CLAUSE, REQUIREMENT)).as_review_note()
+    assert "could not point to obliging text" in note
+
+
+async def test_review_note_carries_the_quotation_when_verified():
+    override(ModelRole.REASONING, _canned("obliges", "shall be protected by encryption"))
+    note = (await judge(CLAUSE, REQUIREMENT)).as_review_note()
+    assert "shall be protected by encryption" in note
+
+
+async def test_review_note_renders_every_relation():
+    for verdict in ("obliges", "does_not_oblige", "conflicts"):
+        override(ModelRole.REASONING, _canned(verdict, "shall be protected by encryption"))
+        assert (await judge(CLAUSE, REQUIREMENT)).as_review_note()

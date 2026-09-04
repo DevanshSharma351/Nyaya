@@ -127,6 +127,11 @@ class ValidatedMapping:
     """Whether the deterministic rule engine independently proposed this control."""
 
     confidence: Confidence | None = None
+    review_note: str | None = None
+    """An advisory opinion for whoever reviews this citation. Never a verdict:
+    the judge that produces it was measured at precision 0.786 and cannot
+    auto-confirm a compliance mapping."""
+
     rejections: list[str] = field(default_factory=list)
     """**Objective** failures only: the citation does not resolve, or the quote
     was composed rather than copied. These are facts, not judgements."""
@@ -228,8 +233,15 @@ async def map_requirement(
     jurisdictions: list[str] | None = None,
     role: ModelRole = ModelRole.REASONING,
     top_k: int = 8,
+    annotate_reviews: bool = False,
 ) -> ComplianceResult:
-    """Map one requirement to its governing controls, with verified citations."""
+    """Map one requirement to its governing controls, with verified citations.
+
+    `annotate_reviews` asks an LLM judge for an advisory opinion on citations
+    the NLI could not confirm. Off by default because it costs a model call per
+    citation (~19 s measured) and adds no authority - only context for the human
+    who will decide.
+    """
     jurisdictions = jurisdictions or ["IN"]
 
     facts = requirement_facts(

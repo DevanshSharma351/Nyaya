@@ -1228,3 +1228,87 @@ is the outstanding work**, and the profile table is the part most in need of it.
 - 20 tests, including one scenario test per row of the guidance table.
 
 **State: 171 tests passing, ruff clean, mypy clean across 58 source files.**
+
+---
+
+## 2026-09-04 — Does an LLM judge recover the recall NLI loses? Measured: no.
+
+The obvious response to the NLI validator's 0.588 recall is to ask a language
+model instead. It was built, measured against the **same 49 labelled pairs**, and
+the answer changed the design — in the opposite direction from the one intended.
+
+### Result
+
+| arm | precision | recall | F1 | false confirmations |
+|---|---|---|---|---|
+| NLI alone | **0.909** | 0.588 | 0.714 | **1** |
+| judge alone | 0.714 | **0.882** | 0.789 | 6 |
+| cascade (NLI, then judge) | 0.714 | 0.882 | 0.789 | 6 |
+| judge, quotation required | 0.786 | 0.647 | 0.710 | 3 |
+
+On the 38 pairs NLI could not confirm, the judge **recovered 5 correct citations
+and newly confirmed 5 wrong ones**. A one-for-one trade.
+
+### Why F1 is the wrong metric here
+
+F1 improves from 0.714 to 0.789, and taking that at face value would be a
+mistake. **F1 assumes the two error types cost the same.** In this system they
+do not:
+
+- a **false confirmation** is a fabricated compliance claim, marked verified,
+  relied upon by people who cannot re-check it;
+- a **false rejection** is a correct citation shown to a human.
+
+Six times the false confirmations, to save five human reviews, is a bad trade in
+a system whose entire purpose is that its outputs can be trusted.
+
+### The failures are instructive
+
+The judge confirmed `RBI-MD-KYC:16(a)` (customer identity) for a
+**beneficial-owner** requirement, reasoning that identification "is part of due
+diligence". It confirmed `GDPR:Article 32.1(c)` (restoration of availability) for
+an **encryption** requirement, reasoning from "a general duty to implement
+security measures".
+
+Both are the same error: **generalising from a parent duty to any obligation
+within its scope.** And it was invited by the prompt's own concession — the
+instruction that a general duty discharged by a specific implementation still
+counts, which was written precisely to fix the NLI failure mode. Loosening the
+criterion to catch the general-to-specific case also opened the door to
+topic-to-obligation drift. The two are harder to separate than they look.
+
+### Design change — the judge annotates, it does not decide
+
+The judge no longer confirms anything. It attaches an **advisory opinion** to
+citations in the `needs_review` band, for the human deciding, and is explicitly
+labelled as unverified machine opinion. An unattributed machine opinion sitting
+in a review queue is indistinguishable from a verified finding, and a reviewer
+who cannot tell them apart will eventually stop checking — which would give away
+the property the whole architecture is built to protect.
+
+It is **off by default**: 19 s per citation for context, not authority.
+
+### One thing that did work
+
+Requiring the judge to **quote the obliging text** halved its false
+confirmations, 6 to 3, at a cost of some recall. That is the same
+quote-verification constraint applied to the proposing model, doing the same
+work in a different place: a claim of obligation that cannot be anchored in text
+that exists is not an established obligation.
+
+### Where this leaves citation validation
+
+Honestly: **partly solved.** Objective checks (resolution, quotation) are
+reliable. Entailment is precise but insensitive, and no cheap second opinion
+fixed it without importing the failure mode the system exists to prevent. The
+current design accepts that and routes the difference to humans, which is
+defensible and matches the brief's human-in-the-loop requirement rather than
+pretending to more automation than the evidence supports.
+
+Options not yet tried, in rough order of promise: a cross-encoder fine-tuned on
+regulatory obligation pairs; a stronger reasoning model as judge (the measured
+one is `qwen3:8b`, and this may be a capability limit rather than a method
+limit); and decomposing the requirement into atomic obligations before checking,
+so general-to-specific and topic-to-obligation stop being confusable.
+
+**State: 175 tests passing, ruff clean, mypy clean across 58 source files.**
