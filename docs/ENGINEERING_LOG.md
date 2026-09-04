@@ -182,3 +182,42 @@ targeted all of `~` and hung.
 2. Ingestion pipeline with clause-aware chunking and the PII shield.
 3. **The retrieval spine, evaluated in isolation before any agent exists** —
    everything downstream inherits its ceiling, so it is measured first.
+
+---
+
+### Finding — schema constraints hold, prompt quality does not (yet)
+
+First end-to-end extraction test through `qwen3:8b`, converting a compliance
+officer's spoken statement into a structured requirement:
+
+**What worked.** Enum constraints are genuinely enforced. The model selected
+`categories = [regulatory, data_management]` and `priority = must` — both correct,
+both drawn from the closed vocabulary, with no post-hoc parsing or repair.
+Constrained decoding via Ollama's `format` parameter is doing real work.
+
+**What did not.** The `statement` field echoed the stakeholder's raw sentence
+verbatim instead of being rewritten as a testable *shall* statement. The field
+description alone (`"A single testable 'shall' statement"`) is insufficient
+instruction.
+
+*Implication:* the extraction agent needs few-shot exemplars and an explicit
+**EARS** template rather than relying on Pydantic field descriptions. This is a
+prompt-design problem, not an infrastructure one — recorded now so the eval
+baseline is honest about where the initial weakness sits.
+
+**Second observation — latency.** The call took **37.9 s / 849 tokens**.
+`qwen3` is a reasoning model and emits a thinking trace; the inline `/no_think`
+directive did not suppress it. At ~38 s per requirement this is too slow for
+batch extraction over a document set.
+
+Options, to be measured rather than guessed:
+1. Route extraction to the `fast` role (`llama3.1:8b`) and reserve `reasoning`
+   for conflict adjudication and compliance mapping, where the deliberation is
+   worth paying for.
+2. Suppress thinking correctly (Ollama `think: false` rather than an in-prompt
+   directive).
+3. Batch and parallelise, accepting per-item latency.
+
+This is exactly the kind of trade-off the role-based routing abstraction exists
+to make cheap to explore: changing which model serves extraction is a config
+edit, and the eval harness can measure both arms.
