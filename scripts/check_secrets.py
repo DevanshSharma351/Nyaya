@@ -54,10 +54,22 @@ BENIGN_VALUES = re.compile(
     """
 )
 
-# An *unquoted* value is a variable reference, not a literal - `password = pw`
-# leaks nothing. A quoted value is a literal, and a literal credential is a
-# secret regardless of how ordinary the characters look.
-IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_.\[\]'\"]*$")
+# In source code, an *unquoted* value is an expression - `token = build(x)`,
+# `password = settings.pw` - and carries no secret itself. A literal credential
+# in code is quoted. Config formats are the exception: there, `KEY=value` is
+# unquoted and is exactly where a real secret lives.
+CONFIG_SUFFIXES = {
+    ".env",
+    ".yaml",
+    ".yml",
+    ".ini",
+    ".cfg",
+    ".conf",
+    ".toml",
+    ".properties",
+    ".tfvars",
+}
+CONFIG_NAMES = re.compile(r"(?:^|/)(?:\.env(?:\..*)?|.*\.env)$")
 
 # Paths where credential-shaped strings are expected and harmless.
 SKIP_PATHS = re.compile(r"(?:^|/)(uv\.lock|package-lock\.json|\.venv/|node_modules/)")
@@ -92,20 +104,28 @@ def scan(path: str, content: str) -> list[str]:
                 findings.append(f"{path}:{lineno}: {label}")
 
         match = ASSIGNMENT.search(line)
-        if match and not _is_benign(match.group("quote"), match.group("value")):
+        if match and not _is_benign(path, match.group("quote"), match.group("value")):
             findings.append(
                 f"{path}:{lineno}: populated credential variable {match.group('name')!r}"
             )
     return findings
 
 
-def _is_benign(quote: str, value: str) -> bool:
+def _is_config_file(path: str) -> bool:
+    """Whether unquoted `KEY=value` in this file could be a live credential."""
+    from pathlib import PurePosixPath
+
+    return PurePosixPath(path).suffix in CONFIG_SUFFIXES or bool(CONFIG_NAMES.search(path))
+
+
+def _is_benign(path: str, quote: str, value: str) -> bool:
     """Decide whether an assigned value is a real credential."""
     value = value.strip()
     if BENIGN_VALUES.match(value):
         return True
-    # Unquoted -> a variable reference, which carries no secret itself.
-    return bool(not quote and IDENTIFIER.match(value))
+    # Unquoted in source code -> an expression, not a literal secret. In a
+    # config file, unquoted is the normal way to write a real one.
+    return bool(not quote and not _is_config_file(path))
 
 
 def main() -> int:

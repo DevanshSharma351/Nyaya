@@ -380,6 +380,23 @@ secret however ordinary its characters look.
 because it quoted the offending example verbatim. The guard works, and the entry
 was reworded to describe the pattern rather than reproduce it.
 
+**3. Third refinement — quoted-vs-unquoted, by file type.** The fix above was
+still too blunt: it flagged `token = _surrogate(...)` in the PII shield, where
+`token` is a pseudonymisation surrogate rather than a credential.
+
+The underlying rule was wrong. *In source code, an unquoted value is an
+expression* — `token = build(x)`, `password = settings.pw` — and carries no
+secret. A literal credential in code is quoted. **Config formats are the
+exception**: in `.env`, `.yaml`, `.ini` and friends, `KEY=value` is unquoted and
+is precisely where a live secret lives.
+
+So the unquoted exemption now applies only outside config files. Verified in
+four directions: quoted secrets in code caught, unquoted secrets in `.env`
+caught, expressions in code ignored, empty and non-credential config ignored.
+
+Three rounds of correction on a ~150-line script is itself the lesson: a
+security control that has not been attacked is an assumption, not a control.
+
 **2. Extensionless files were skipped entirely.** The binary filter keyed on file
 extension, so `.githooks/pre-commit` — a shell script, exactly the sort of file a
 credential gets pasted into — was never scanned.
@@ -397,3 +414,91 @@ variables), and 0 false positives across the real codebase.
 `fmt`, `scan`, `check`. `scripts/reset_db.py` **refuses to run unless
 `env == "local"`** — dropping every table should not be one typo away in any
 environment holding real data.
+
+---
+
+## 2026-09-04 — Ingestion: clause splitting and the PII shield
+
+### Decision 8 — Split regulatory text on its own structure, not by token count
+
+Regulatory text is not prose to be windowed. It is a numbered tree, and **the
+numbering is the citation scheme**: `RBI-MD-KYC:16(a)` means something to a
+compliance officer in a way `chunk_47` never will.
+
+Three things structural splitting buys that fixed-size chunking cannot:
+
+1. **Citations that resolve.** A generated requirement cites a key; the
+   validator resolves that key back to exactly one row. This is the mechanism
+   behind the whole citation-correctness metric.
+2. **Retrieval units that are semantically whole.** A clause is a complete
+   obligation. A 512-token window routinely severs one mid-sentence, so the
+   retrieved span no longer states the duty it is cited for.
+3. **Interpretive context on demand.** A leaf such as `(a)` often means nothing
+   without its parent; the hierarchy lets retrieval walk upward.
+
+Implemented as a tiered marker grammar covering the conventions actually present
+in the corpus — `CHAPTER IV`, `Article 32`, `16.`, dotted `8.2.1`, and
+parenthesised `(a)` / `(1)` / `(i)`.
+
+Two sub-problems worth recording:
+
+**Ambiguous roman numerals.** `(i)`, `(v)` and `(x)` are valid under both the
+alpha and roman patterns. Resolved by legal drafting convention: read as alpha
+unless a roman series is already open at that tier.
+
+**Dotted numbering carries its own depth.** `5.1.2` is two levels below `5`, so
+its tier is computed from the number itself rather than assigned by pattern.
+
+**Conservative by design:** text that cannot be attributed to a numbered clause
+attaches to the enclosing clause, and material before the first clause is kept
+as a `preamble` node. Losing regulatory text is the worst failure available
+here — a dropped obligation is one the system can never detect a gap against.
+There is a test asserting exactly that no source line disappears.
+
+### Bug found by testing — organisational divisions must be transparent to citation
+
+The first implementation produced `RBI-MD-KYC:Chapter IV.16`.
+
+**Nobody cites a chapter.** They cite section 16. Parts and chapters organise a
+document without participating in its citation scheme. Fixed by marking those
+styles transparent: they still nest in the tree, because retrieval walks upward
+for context, but they contribute nothing to the key.
+
+Worth recording because it is the kind of error that looks harmless and is not —
+every citation the system emitted would have been unresolvable against how the
+source is actually referenced.
+
+10 tests, all passing, written against text shaped like RBI Master Directions,
+GDPR articles and PCI-style dotted clauses.
+
+### Decision 9 — PII shield: validated recognisers, stable surrogates
+
+Nothing sensitive reaches a model. Two properties matter more than raw recall:
+
+**Surrogates are stable within a project, and salted per project.** The same
+Aadhaar always maps to the same token, so a model can still reason that two
+statements concern the same customer without ever seeing the identifier — a
+random surrogate per occurrence would destroy that coreference. The per-project
+salt means the same individual is not correlatable across engagements, and the
+token cannot be brute-forced back to the value without it.
+
+**Detection is checksum-validated wherever the format allows.** Aadhaar carries
+a **Verhoeff** check digit (implemented directly — dihedral group D5) and PAN a
+positional structure in which the fourth character encodes holder type. Cards
+are Luhn-checked.
+
+*Why validation rather than a looser regex:* a bare 12-digit pattern would mask
+transaction references, settlement IDs and account numbers. **Over-masking
+destroys the very requirement text the system exists to analyse** — the failure
+is silent and corrupts every downstream stage. There is a test pinning this:
+`Transaction reference 111111111111` must pass through untouched.
+
+Recognisers cover Aadhaar, PAN, IFSC, Indian phone, passport, email, card and
+date of birth. Presidio NER is layered on top for names and locations, but is
+**optional**: it needs spaCy, and ingestion must not fail outright when the model
+is absent, so callers degrade to pattern-only masking.
+
+9 tests passing, including reversibility, cross-project non-correlation, and a
+check that masking leaves the surrounding requirement wording intact.
+
+**Suite total: 24 tests, all passing. Lint clean.**
