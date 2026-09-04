@@ -1964,3 +1964,62 @@ ornament-over-content failure this interface is meant to avoid.
 **State: 219 tests passing against an isolated database, ruff and mypy clean
 across 76 source files; frontend builds with tsc and eslint clean across seven
 routes.**
+
+---
+
+## Session: the hero assembly, restored and kept
+
+Feedback: the landing scene used to show particles spiralling into a structure,
+that was the good part, and it had stopped doing it. Then, separately: it should
+not vanish on scroll.
+
+Both were my regressions, and the first was a straightforward arithmetic
+collision. Convergence ran over scroll fraction 0 → 0.70. The fade I had added
+to stop the fixed canvas following the reader down the page ran 0.22 → 0.40. So
+**the field went fully transparent at 40% scroll with the structure only 57%
+formed** — the three tiers never finished assembling on screen at all. Two
+numbers picked separately, neither checked against the other.
+
+Measuring the page instead of guessing: 1,956px of scroll travel at a 900px
+viewport, hero section accounting for the first 42% of it. The assembly now runs
+to 0.38 — nearly the whole hero — and the recede is defined as starting exactly
+where the assembly ends, so the two cannot drift apart again.
+
+### It recedes rather than leaves
+
+The fade existed for a real reason: a fixed canvas follows the reader, and a
+thousand moving dots behind body text is the ornament-over-content failure this
+interface is built to avoid. Deleting it brings that back; fading to nothing
+throws away the thing worth keeping.
+
+So the field stays and gets out of the way. It holds half its opacity, and every
+tier lightens towards a resting grey — opacity alone is not enough, because a
+`#52525b` particle at half opacity over white still lands near body-text weight,
+and a dot that dark inside a paragraph reads as a full stop in the wrong place.
+
+The links recede much further, to 18%. A dot behind a word is a speck; a line is
+a strike-through. The filaments run for hundreds of pixels and cross whole
+sentences, so at the particles' resting opacity they were the one part of the
+field genuinely competing with the text.
+
+### The links were chords, not strands
+
+Fixing the timing exposed a real defect in the structure itself. Each group of
+three consecutive particles is one trace — source text, the requirement drawn
+from it, the clause that obliges it — but the ring angle was taken from the
+*particle* index, and golden-angle placement puts consecutive particles 137°
+apart. Every link was therefore a long chord straight across the structure.
+Nine hundred of those is a web, not a lattice, and on a page with centred
+content those chords swept across whole paragraphs.
+
+Taking the angle from the chain index instead gives all three members of a trace
+the same angle, so each becomes a near-vertical strand leaning inward as it
+rises through the tiers. Same data, and it now looks like what it represents.
+The density went back up too — 520 particles to 1,100 — since the earlier
+thinning was part of what had been lost.
+
+The scatter is biased right rather than centred. The copy occupies the left of
+the frame and a symmetric scatter puts a third of the field behind it.
+
+**State: 219 tests passing, ruff and mypy clean across 76 source files; frontend
+builds with tsc and eslint clean.**
