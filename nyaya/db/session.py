@@ -30,9 +30,7 @@ def get_engine() -> AsyncEngine:
 
 @lru_cache
 def get_sessionmaker() -> async_sessionmaker[AsyncSession]:
-    return async_sessionmaker(
-        get_engine(), class_=AsyncSession, expire_on_commit=False
-    )
+    return async_sessionmaker(get_engine(), class_=AsyncSession, expire_on_commit=False)
 
 
 @asynccontextmanager

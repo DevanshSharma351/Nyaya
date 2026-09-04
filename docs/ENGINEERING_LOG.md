@@ -221,3 +221,106 @@ Options, to be measured rather than guessed:
 This is exactly the kind of trade-off the role-based routing abstraction exists
 to make cheap to explore: changing which model serves extraction is a config
 edit, and the eval harness can measure both arms.
+
+---
+
+## 2026-09-04 — Session 1 (continued): Persistence layer
+
+### Housekeeping — repository
+
+Project moved to its own repository at `github.com/DevanshSharma351/Nyaya`,
+isolated from the stray repo at `~`. Commit history carries no assistant
+attribution, at the owner's direction.
+
+*Note on a distinction that came up:* references to `anthropic` in
+`nyaya/llm/providers/`, `config.py` and `.env.example` are **vendor references
+for a working provider adapter**, in the same category as the Gemini and Groq
+adapters — not authorship attribution. They are functional code and were left
+in place. Removing them would delete a supported provider.
+
+### Decision 7 — Schema design
+
+17 tables. Four choices are load-bearing enough to record:
+
+**Clause-level knowledge base, versioned by supersession.** The retrievable
+unit is a `Clause` with a `citation_key` (`RBI-MD-KYC:16(a)`), a character span
+into its parent document, and a hierarchy pointer. Documents are never mutated;
+an amended regulation becomes a new `SourceDocument` row and the old one is
+marked superseded. *Rationale:* regulatory-change impact analysis needs to
+distinguish "cited the old version" from "cited the current version", which
+in-place mutation would erase. A `content_hash` on each document detects silent
+substitution of a source.
+
+**Requirements version by supersession, not mutation.** Once a requirement is
+APPROVED it is an immutable baseline; a change writes a new row pointing back
+via `supersedes_id`. *Rationale:* audit requires that the baseline as it stood
+on any past date be reconstructible. In-place updates destroy that.
+
+**Evidence carries a *verified* relation, not an asserted one.** The `relation`
+field (`supports` / `contradicts` / `neutral`) is set by the NLI model, not by
+the agent that produced the citation. `cited_key` is stored verbatim even when it
+resolves to nothing, because an unresolvable citation is itself a finding.
+`resolved` records whether the key matched a real clause. *This is the schema-level
+expression of the project's central claim: the model proposes, the validator
+disposes.*
+
+**Traceability as an untyped edge table.** `TraceLink` uses `(kind, uuid)` pairs
+rather than a foreign key per entity type, so one table spans utterance →
+requirement → clause → control → test case without a join table per pair. This
+is the structure the regulatory-change impact walk traverses.
+
+Also recorded: `confidence_components` is stored alongside `confidence` so a low
+score can be explained and each component's calibration measured separately;
+`ControlMapping.proposed_by` separates LLM-proposed mappings from rule-derived
+ones, and `validator_passed` records the deterministic verdict — the gap between
+the two is a headline evaluation metric.
+
+### Verified — the audit ledger's tamper-evidence claim
+
+The ledger is hash-chained: each entry commits to its predecessor's hash.
+Appends are serialised per project with a **transaction-scoped advisory lock**
+(`pg_advisory_xact_lock`) rather than a table lock, so two concurrent writers
+cannot fork the chain while unrelated projects never block each other.
+
+Five tests pass, and the two that matter attack the chain the way a real
+adversary would — **raw SQL that bypasses the ORM entirely**, since the threat
+model is someone with database access rewriting history:
+
+| Test | Attack | Detected as |
+|---|---|---|
+| `test_altered_payload_is_detected` | `UPDATE` an earlier entry's payload | `content altered` at seq 2 |
+| `test_deleted_entry_is_detected` | `DELETE` an entry mid-chain | `sequence gap` at seq 4 |
+
+A third test pins JSON canonicalisation (sorted keys), without which the same
+event could hash differently on two occasions and make verification flaky.
+
+*This claim is now evidence, not assertion.* It was worth testing precisely
+because "we have an audit log" is cheap to say and rarely true under adversarial
+conditions.
+
+### Schema verified against the live database
+
+Not assumed — built with `create_all` against the running Postgres and
+introspected:
+
+- 17 tables created
+- **HNSW** index live on `clause.embedding` (cosine ops, `m=16`,
+  `ef_construction=64`) — chosen over IVFFlat for better recall-at-latency at
+  this corpus size and because it needs no training step
+- **GIN** indexes on `clause.search_vector` and `requirement.categories`
+- `clause.search_vector` confirmed as a **generated** column — computed by
+  Postgres, so it cannot drift out of sync with `text` the way an
+  application-maintained column would
+
+### Environment fix
+
+`greenlet` added explicitly. SQLAlchemy's async bridge requires it but does not
+pull it in on arm64, and the failure surfaces only at first connection — worth
+pinning rather than rediscovering on another machine.
+
+### Testing policy
+
+Integration tests run against **the real Postgres**, not SQLite. The schema
+depends on pgvector, generated `tsvector` columns, GIN/HNSW indexes and advisory
+locks — none of which SQLite can emulate. A test passing against a substitute
+engine would not be evidence about the engine that actually runs.

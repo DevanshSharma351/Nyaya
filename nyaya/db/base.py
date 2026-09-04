@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, ClassVar
 
 from sqlalchemy import DateTime, MetaData, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -30,7 +30,9 @@ NAMING_CONVENTION = {
 class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
 
-    type_annotation_map = {dict[str, Any]: JSONB}
+    # Map bare `dict` annotations onto JSONB rather than SQLAlchemy's default
+    # JSON, so that Postgres can index them (GIN) and query into them.
+    type_annotation_map: ClassVar[dict] = {dict[str, Any]: JSONB}
 
 
 class UUIDPrimaryKey:
@@ -41,9 +43,7 @@ class UUIDPrimaryKey:
     and so that record counts are not inferable from an identifier.
     """
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
 
 class Timestamped:
@@ -60,4 +60,4 @@ class Timestamped:
     )
 
 
-__all__ = ["Base", "EMBEDDING_DIM", "Timestamped", "UUIDPrimaryKey"]
+__all__ = ["EMBEDDING_DIM", "Base", "Timestamped", "UUIDPrimaryKey"]
