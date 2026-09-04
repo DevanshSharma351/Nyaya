@@ -324,3 +324,76 @@ Integration tests run against **the real Postgres**, not SQLite. The schema
 depends on pgvector, generated `tsvector` columns, GIN/HNSW indexes and advisory
 locks — none of which SQLite can emulate. A test passing against a substitute
 engine would not be evidence about the engine that actually runs.
+
+---
+
+## 2026-09-04 — Secret-leak prevention
+
+Requirement from the owner: nothing secret reaches `main`.
+
+### Audit of what is already published
+
+| Check | Result |
+|---|---|
+| `.env` tracked? | No — ignored, never staged |
+| Key/PEM/credential files tracked? | None (`.env.example` only) |
+| Secret-shaped strings anywhere in **full history**? | None |
+| API keys populated in `.env.example`? | All empty |
+
+The only passwords in `.env.example` are local Docker defaults
+(`nyaya_dev_pw`, `admin`) — which is what an example file is for, and they grant
+nothing beyond a container on `localhost`.
+
+### Guard installed: pre-commit secret scan
+
+Discipline is not a control. `scripts/check_secrets.py` runs from
+`.githooks/pre-commit` and **aborts the commit** on a finding.
+
+Design points worth recording:
+
+- **Scans staged content, not the working tree** (`git show :path`), so it sees
+  exactly what would be committed — not a file that was cleaned up after staging.
+- **Hooks are version-controlled** via `core.hooksPath = .githooks` rather than
+  living untracked in `.git/hooks`, so the guard survives a fresh clone
+  (`make hooks`).
+- **Deliberately biased toward false positives.** A false positive costs one
+  allowlist comment; a leaked key that reaches a public remote must be treated
+  as compromised and rotated even after the commit is rewritten. The two costs
+  are not comparable.
+
+### Two bugs found by testing the scanner rather than trusting it
+
+Written, then attacked with a file of planted credentials. Both defects were
+**false negatives** — the failure mode that matters, since a scanner that misses
+things is worse than none for giving false assurance.
+
+**1. Password literals slipped through.** The exemption for bare identifiers —
+intended to skip an assignment whose value is another *variable*, which leaks
+nothing — also swallowed an assignment of a quoted alphanumeric password, because
+such a value is itself a syntactically valid identifier.
+
+*Fix:* the exemption now applies only to **unquoted** values. An unquoted value
+is a variable reference; a quoted one is a literal, and a literal credential is a
+secret however ordinary its characters look.
+
+*Postscript:* the first draft of this very log entry was **blocked by the hook**,
+because it quoted the offending example verbatim. The guard works, and the entry
+was reworded to describe the pattern rather than reproduce it.
+
+**2. Extensionless files were skipped entirely.** The binary filter keyed on file
+extension, so `.githooks/pre-commit` — a shell script, exactly the sort of file a
+credential gets pasted into — was never scanned.
+
+*Fix:* binaries are now detected by **content** (a NUL byte in the first 8 KB),
+not by extension.
+
+Final state, verified in both directions: 6 findings against the planted-secret
+file (Google, OpenAI and Anthropic keys, plus three populated credential
+variables), and 0 false positives across the real codebase.
+
+### Also added
+
+`Makefile` with `setup`, `hooks`, `up`, `down`, `db-reset`, `test`, `lint`,
+`fmt`, `scan`, `check`. `scripts/reset_db.py` **refuses to run unless
+`env == "local"`** — dropping every table should not be one typo away in any
+environment holding real data.

@@ -1,0 +1,5 @@
+#!/bin/sh
+# Blocks commits containing credentials. Installed via `make hooks`, which
+# points core.hooksPath at this directory so the hook is version-controlled
+# rather than living untracked in .git/hooks.
+exec python3 scripts/check_secrets.py
