@@ -1312,3 +1312,98 @@ limit); and decomposing the requirement into atomic obligations before checking,
 so general-to-specific and topic-to-obligation stop being confusable.
 
 **State: 175 tests passing, ruff clean, mypy clean across 58 source files.**
+
+---
+
+## 2026-09-04 — Finishing citation validation: two signals, and the agreement gate
+
+The module was left "partly solved": objective checks reliable, entailment
+precise but insensitive at 0.588 recall, and an LLM judge measured and rejected
+for importing false confirmations.
+
+Three options had been listed. A fourth turned out to be sitting in the
+codebase already.
+
+### The cross-encoder was a better validator than the NLI model
+
+The reranker loaded for *retrieval* had never been asked whether it also
+discriminates obligation. Measured over the same 49 labelled pairs:
+
+| signal | AUC | precision | recall | false confirmations |
+|---|---|---|---|---|
+| NLI entailment (DeBERTa-MNLI) | 0.796 | 0.909 | 0.588 | 1 |
+| **cross-encoder relevance** | **0.910** | **0.923** | **0.706** | 1 |
+| embedding cosine | 0.748 | — | — | — |
+
+The purpose-picked entailment model was **beaten by a component chosen for a
+different job**. In hindsight it is not surprising: `bge-reranker-v2-m3` is a
+large cross-encoder trained on relevance across many domains, where the MNLI
+model is trained on a narrow task in a register regulatory text does not share.
+
+Worth recording as a methodological point: the earlier work assumed the *type*
+of model determined suitability, and never measured the alternative that was
+already loaded and free.
+
+### Agreement is worth more than either signal alone
+
+The two models fail **differently** - NLI on general-to-specific obligations,
+the cross-encoder on topical adjacency. Requiring both:
+
+| configuration | precision | recall | false confirmations |
+|---|---|---|---|
+| NLI alone | 0.909 | 0.588 | 1 |
+| cross-encoder alone | 0.923 | 0.706 | 1 |
+| **both agreeing** | **1.000** | 0.529 | **0** |
+
+Zero false confirmations is the property an auto-accept gate actually needs. A
+tier that is *usually* right still ships fabricated compliance claims, and one
+wrong claim marked verified costs more than several correct ones sent for review.
+
+### Three tiers, because the useful question is what happens next
+
+| tier | rule | measured purity | outcome |
+|---|---|---|---|
+| `confirmed` | both signals agree | **1.000** (9 genuine, 0 wrong) | accept unreviewed |
+| `likely` | one signal confident | 0.667 (4 of 6) | review, ranked high |
+| `unconfirmed` | neither | 0.118 (4 of 34) | review, ranked low |
+| `conflicting` | confident contradiction | — | reject, surface as a finding |
+
+The review queue is now *ordered* rather than a flat list: conflicts first,
+then citations one model supports, then the rest. Same total human effort,
+spent on the cases most likely to matter.
+
+### A bug found by disagreeing with my own offline analysis
+
+The first live run reported 11 confirmed with **1 false confirmation**, where the
+offline sweep had given 9 with none. That discrepancy was the finding.
+
+Cause: **a double sigmoid.** `bge-reranker` applies a sigmoid internally, so its
+output is already a probability. Squashing it again collapsed the range from
+[0, 1] to [0.50, 0.73], which made the 0.30 agreement threshold pass
+*everything* - the second signal was effectively disabled, and the gate admitted
+a wrong citation while appearing to work.
+
+The same bug was present in the confidence calculation's `_normalise` and fixed
+there too.
+
+This is the kind of defect that survives every test: no exception, plausible
+numbers, a working-looking pipeline. It was caught only because two independent
+computations of the same quantity disagreed. Worth doing more often.
+
+### Where citation validation now stands
+
+**Finished, in a defensible sense.** There is an auto-accept tier with no
+measured false confirmations, a ranked review queue for the rest, and every
+threshold derived from a labelled sweep rather than chosen.
+
+What it does *not* claim: 9 of 17 genuine citations are auto-accepted, so a
+little over half the human effort is removed, not all of it. The honest summary
+is that the system now knows *which* citations it can vouch for, which is the
+property that matters more than how many.
+
+Limitations unchanged and still real: 49 judgements, single annotator, one
+corpus. The thresholds are fitted on the same set they are reported on, so these
+numbers are optimistic; a held-out set is needed before quoting them as
+performance.
+
+**State: 183 tests passing, ruff clean, mypy clean across 60 source files.**
