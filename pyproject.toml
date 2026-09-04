@@ -81,7 +81,12 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "SIM", "RUF"]
-ignore = ["E501"]
+ignore = [
+    "E501",
+    # `Depends(...)` in a parameter default is FastAPI's documented idiom; the
+    # call is evaluated once at import and is not a mutable shared default.
+    "B008",
+]
 
 [tool.mypy]
 python_version = "3.12"

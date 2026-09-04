@@ -1504,3 +1504,91 @@ unfounded. Approval status reflects what humans actually decided - a halted run
 persists DRAFT rather than silently baselining work a reviewer declined.
 
 **State: 208 tests passing, ruff clean, mypy clean across 66 source files.**
+
+---
+
+## 2026-09-04 — API and interface
+
+### The API
+
+13 endpoints over the existing engines — retrieval, extraction, coverage, SDLC
+ranking, change impact, and the traceability graph. Verified against the running
+service rather than by inspection: a paraphrased query returns `RBI-MD-KYC:22`,
+a regulated fast-changing profile returns `agile_devsecops_hybrid` at 77 %, and
+four seed statements return 14 % control coverage with 9 blocking gaps.
+
+Two decisions worth recording:
+
+**API schemas are separate from the ORM.** A response model that is also a
+database row leaks storage decisions to every client and freezes the schema.
+
+**Health reports what is actually reachable, per model.** A run with retrieval
+but no reranker, or citation checking without entailment, produces weaker
+guarantees than a full one. A client should be able to *see* that rather than
+infer it from worse answers.
+
+### The interface
+
+Apple's depth comes from **material, not ornament** — layered translucency, one
+consistent light source, motion with real physics. The design follows that
+rather than imitating its surface: a specular edge on every raised panel from
+the same direction, backdrop blur with saturation, spring easing.
+
+One constraint was applied deliberately, and it is a judgement the owner may
+want to overrule. **This is a compliance tool, and decoration on a data surface
+costs credibility** — a finding that animates like a marketing page invites the
+reader to discount it. So depth and motion live in the ambient layers
+(background, hero, the 3D graph) while anything carrying a citation, a score or
+a gap is flat, still and legible. Numbers do not count up; gauges draw once and
+stop.
+
+The 3D graph shows the **real corpus** — 137 clause and document nodes, 211
+edges, force-directed with documents pinned so the layout is stable across
+reloads and a reader's spatial memory is worth something. It is 3D because the
+data is: clauses nest inside clauses inside documents. A decorative 3D scene
+beside a 2D list would have been ornament.
+
+### The bug I nearly introduced by trusting a screenshot
+
+The hero rendered, then stopped rendering, and the copy sat at **opacity 0.187**
+mid-animation. I made three "fixes" — moving the background layers, weakening
+the force layout, replacing the instanced mesh — before instrumenting properly.
+
+The console said the scene mounted with 137 nodes and `useFrame` **never fired
+once**. The browser pane was hidden, so `requestAnimationFrame` was paused.
+Framer Motion animations stalled mid-flight, and the WebGL loop never ran.
+
+Two things made this hard to see, both worth remembering:
+
+- **Framer Motion uses the Web Animations API** for simple opacity and transform
+  work, which runs on the compositor. Some animations completed while rAF was
+  paused, which looked like proof that rAF was running.
+- **`readPixels` on a canvas without `preserveDrawingBuffer` returns a cleared
+  buffer**, so my "nothing was drawn" measurement was meaningless.
+
+The code was correct throughout. Two of the three changes were unnecessary; the
+instanced-mesh replacement is arguably better and was kept, and the layout
+weakening was reverted after it collapsed every node onto one point.
+
+The lesson is narrow and useful: **a rendering environment can be the thing
+under test.** Instrument before changing anything whose failure mode is
+"nothing appears".
+
+### Also fixed — my own secret scanner crashed
+
+Staging the frontend's `favicon.ico` aborted the pre-commit scan with
+`UnicodeDecodeError`: staged content was read with `text=True`, and a binary is
+not UTF-8. **A guard that crashes on an ordinary commit gets disabled**, which is
+worse than one that skips a file it cannot read. Now decodes leniently. That is
+the fifth correction to this script, every one found by running it.
+
+### React Compiler and imperative rendering
+
+Next 16's compiler lint rejects the mutation an animation loop requires. The
+exception is file-scoped with a written justification: nothing in that file
+participates in React's rendering model beyond mounting the canvas, and routing
+137 positions per frame through state would re-render the tree sixty times a
+second to no purpose. No other component carries the exception.
+
+**State: 208 tests passing, ruff clean, mypy clean across 75 source files;
+frontend builds clean with tsc and eslint clean.**

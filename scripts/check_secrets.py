@@ -91,8 +91,17 @@ def staged_files() -> list[str]:
 
 
 def staged_content(path: str) -> str:
-    out = subprocess.run(["git", "show", f":{path}"], capture_output=True, text=True)
-    return out.stdout if out.returncode == 0 else ""
+    """Read staged bytes and decode leniently.
+
+    Captured as bytes rather than text: a staged binary (an icon, a font) is not
+    UTF-8, and decoding it strictly raised `UnicodeDecodeError` and aborted the
+    entire scan on an otherwise ordinary commit. A guard that crashes gets
+    disabled, which is worse than one that skips a file it cannot read.
+    """
+    out = subprocess.run(["git", "show", f":{path}"], capture_output=True)
+    if out.returncode != 0:
+        return ""
+    return out.stdout.decode("utf-8", errors="replace")
 
 
 def scan(path: str, content: str) -> list[str]:

@@ -32,6 +32,12 @@ eval-compliance: ## Measure the citation validator against the labelled set
 eval-judge: ## Compare the NLI validator against an LLM judge (slow)
 	uv run python -m nyaya.eval.judge_eval
 
+api: ## Run the API on :8000
+	uv run uvicorn nyaya.api.app:app --reload --port 8000
+
+web: ## Run the frontend on :3000 (needs `make api` in another shell)
+	cd web && npm run dev
+
 test: ## Run the test suite
 	uv run pytest -q
 
