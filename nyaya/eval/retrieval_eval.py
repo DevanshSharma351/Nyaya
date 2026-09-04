@@ -28,6 +28,7 @@ from nyaya.retrieval.embedder import embed_query
 from nyaya.retrieval.hybrid import (
     dense_search,
     lexical_search,
+    load_context,
     reciprocal_rank_fusion,
 )
 from nyaya.retrieval.rerank import available as reranker_available
@@ -94,11 +95,23 @@ async def _run_arms(
     if use_reranker:
         # Rerank the fused shortlist, and dense alone, so the reranker's
         # contribution can be attributed to each base separately.
+        #
+        # Context is loaded first, because that is what `search` does and the
+        # arm under test has to be the code that ships. It was not, and the
+        # difference was not small: this harness reported the reranker at MRR
+        # 0.723 while the shipping path scored 0.855, because the harness was
+        # scoring bare sub-clauses and the pipeline was not. A benchmark that
+        # measures a configuration nobody runs is worse than no benchmark, since
+        # it is trusted.
+        dense_shortlist = list(dense[:30])
+        fused_shortlist = list(fused[:30])
+        await load_context(session, dense_shortlist)
+        await load_context(session, fused_shortlist)
         arms["hybrid+rr"] = [
-            r.citation_key for r in await rerank(gold.query, list(fused[:30]), top_n=top)
+            r.citation_key for r in await rerank(gold.query, fused_shortlist, top_n=top)
         ]
         arms["dense+rr"] = [
-            r.citation_key for r in await rerank(gold.query, list(dense[:30]), top_n=top)
+            r.citation_key for r in await rerank(gold.query, dense_shortlist, top_n=top)
         ]
     return arms
 

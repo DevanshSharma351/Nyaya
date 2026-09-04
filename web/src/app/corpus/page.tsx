@@ -15,7 +15,8 @@
  */
 
 import dynamic from "next/dynamic";
-import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { Block, ModuleShell, Rationale } from "@/components/chrome/ModuleShell";
 import { Badge, Empty, Failure } from "@/components/ui";
 import {
@@ -30,14 +31,19 @@ const CorpusLayer = dynamic(() => import("@/components/scenes/CorpusLayer"), {
   ssr: false,
 });
 
-export default function CorpusPage() {
+function CorpusModule() {
+  // A retrieval result links here with the clause it wants selected. Reading it
+  // from the URL rather than from local state is what makes that link work at
+  // all - and what lets a reader send someone else a link to one clause.
+  const requested = useSearchParams().get("clause");
+
   const [graph, setGraph] = useState<Graph | null>(null);
   const [documents, setDocuments] = useState<SourceDocument[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [hovered, setHovered] = useState<GraphNode | null>(null);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(requested);
   const [clause, setClause] = useState<Clause | null>(null);
-  const [filter, setFilter] = useState("");
+  const [filter, setFilter] = useState(requested ?? "");
 
   useEffect(() => {
     let cancelled = false;
@@ -205,5 +211,19 @@ export default function CorpusPage() {
         )}
       </Block>
     </ModuleShell>
+  );
+}
+
+/**
+ * `useSearchParams` needs a Suspense boundary above it, or the whole route opts
+ * out of static rendering. The fallback is deliberately the page's own header
+ * rather than a spinner: the module's title and question do not depend on the
+ * query string, so there is no reason to withhold them.
+ */
+export default function CorpusPage() {
+  return (
+    <Suspense fallback={null}>
+      <CorpusModule />
+    </Suspense>
   );
 }

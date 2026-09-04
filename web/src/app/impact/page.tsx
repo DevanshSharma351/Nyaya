@@ -42,13 +42,20 @@ export default function ImpactPage() {
     let cancelled = false;
     api
       .documents()
-      // Test fixtures are not part of the corpus a reader is meant to explore.
-      .then((d) => !cancelled && setDocuments(d.filter((x) => !x.short_code.startsWith("TEST-"))))
+      .then((d) => !cancelled && setDocuments(d))
       .catch(() => undefined);
     return () => {
       cancelled = true;
     };
   }, []);
+
+  // Only sources that actually hold two versions can be compared. The selector
+  // used to list every source, so choosing one with a single version returned a
+  // 404 the reader had done nothing to cause - an interface offering an action
+  // it knows will fail.
+  const comparable = documents.filter((d) => d.versions.length > 1);
+  const selected = comparable.find((d) => d.short_code === code);
+  const availableVersions = selected?.versions ?? [];
 
   const run = useCallback(async () => {
     setBusy(true);
@@ -103,35 +110,58 @@ export default function ImpactPage() {
               <span className="caption">Source</span>
               <select
                 value={code}
-                onChange={(event) => setCode(event.target.value)}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  setCode(next);
+                  // Move the version fields to a pair that exists for the newly
+                  // chosen source, rather than carrying over one that does not.
+                  const versions =
+                    comparable.find((d) => d.short_code === next)?.versions ?? [];
+                  if (versions.length > 1) {
+                    setFrom(versions[versions.length - 2]);
+                    setTo(versions[versions.length - 1]);
+                  }
+                }}
                 className="body"
                 style={field}
               >
-                {documents.length === 0 && <option value={code}>{code}</option>}
-                {documents.map((document) => (
+                {comparable.length === 0 && <option value={code}>{code}</option>}
+                {comparable.map((document) => (
                   <option key={document.short_code} value={document.short_code}>
-                    {document.short_code}
+                    {document.short_code} · {document.versions.length} versions
                   </option>
                 ))}
               </select>
             </label>
             <label className="flex flex-col gap-1.5">
               <span className="caption">From version</span>
-              <input
+              <select
                 value={from}
                 onChange={(event) => setFrom(event.target.value)}
                 className="body"
                 style={field}
-              />
+              >
+                {(availableVersions.length ? availableVersions : [from]).map((v) => (
+                  <option key={v} value={v}>
+                    v{v}
+                  </option>
+                ))}
+              </select>
             </label>
             <label className="flex flex-col gap-1.5">
               <span className="caption">To version</span>
-              <input
+              <select
                 value={to}
                 onChange={(event) => setTo(event.target.value)}
                 className="body"
                 style={field}
-              />
+              >
+                {(availableVersions.length ? availableVersions : [to]).map((v) => (
+                  <option key={v} value={v}>
+                    v{v}
+                  </option>
+                ))}
+              </select>
             </label>
             <div className="flex items-end">
               <Button onClick={run} disabled={busy}>
@@ -146,10 +176,26 @@ export default function ImpactPage() {
         <Block>
           <Failure message={error} />
           <p className="caption mt-3">
-            A 404 here means the corpus holds only one version of that source.
             Amendment analysis needs both the superseded text and the text that
-            replaced it, because the comparison is what produces the finding.
+            replaced it, because the comparison is what produces the finding. Only
+            sources holding more than one version are offered above; seed another
+            with <span className="mono">make seed</span>.
           </p>
+        </Block>
+      )}
+
+      {comparable.length === 0 && documents.length > 0 && !error && (
+        <Block>
+          <div className="glass p-6">
+            <div className="headline mb-2">Nothing to compare yet</div>
+            <p className="caption m-0" style={{ maxWidth: 640 }}>
+              Every source in the corpus holds a single version, so there is no
+              amendment to analyse. <span className="mono">make seed</span> ingests
+              one: three edits to the Master Direction that between them amend a
+              clause, change a quantity inside a clause, and remove a clause
+              outright — the three cases this walk distinguishes.
+            </p>
+          </div>
         </Block>
       )}
 

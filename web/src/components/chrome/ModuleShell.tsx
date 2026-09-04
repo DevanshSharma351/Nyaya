@@ -68,7 +68,7 @@ export function ModuleShell({
         }}
       />
 
-      <main className="content-layer pb-36 pl-0 md:pl-[236px]">
+      <main className="content-layer with-rail pb-36">
         <div className="mx-auto max-w-5xl px-6 lg:px-12">
           {/*
             Entrances are CSS, not JavaScript.

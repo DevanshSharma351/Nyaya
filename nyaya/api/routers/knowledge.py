@@ -57,7 +57,14 @@ async def get_clause(citation_key: str, session: AsyncSession = Depends(db_sessi
 
 @router.get("/documents")
 async def list_documents(session: AsyncSession = Depends(db_session)):
-    """Sources in the knowledge base, with clause counts."""
+    """Sources in the knowledge base, with clause counts and known versions.
+
+    Only in-force sources are listed, but every version of each is reported.
+    That is not bookkeeping: change-impact analysis needs two versions to
+    compare, and without this the interface had no way to know which sources
+    have a second one. It offered all of them, and picking a source with a
+    single version returned a 404 the reader had done nothing to deserve.
+    """
     rows = (
         await session.execute(
             select(
@@ -75,6 +82,19 @@ async def list_documents(session: AsyncSession = Depends(db_session)):
             .order_by(SourceDocument.short_code)
         )
     ).all()
+
+    # Every version of every short code, current or superseded.
+    version_rows = (
+        await session.execute(
+            select(SourceDocument.short_code, SourceDocument.version).order_by(
+                SourceDocument.short_code, SourceDocument.version
+            )
+        )
+    ).all()
+    versions: dict[str, list[str]] = {}
+    for code, version in version_rows:
+        versions.setdefault(code, []).append(version)
+
     return [
         {
             "short_code": r.short_code,
@@ -82,6 +102,7 @@ async def list_documents(session: AsyncSession = Depends(db_session)):
             "issuer": r.issuer,
             "jurisdiction": r.jurisdiction,
             "version": r.version,
+            "versions": versions.get(r.short_code, [r.version]),
             "effective_from": r.effective_from,
             "clauses": r.clauses,
         }

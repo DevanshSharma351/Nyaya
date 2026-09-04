@@ -62,10 +62,30 @@ class RequirementOut(BaseModel):
     evidence: list[EvidenceOut] = Field(default_factory=list)
 
 
+class Clarification(BaseModel):
+    """An open question, and the answer a stakeholder gave for it."""
+
+    question: str = Field(min_length=1)
+    answer: str = Field(min_length=1)
+
+
 class ExtractIn(BaseModel):
     text: str = Field(min_length=1)
     domain: str = "ekyc_onboarding"
     jurisdictions: list[str] = Field(default_factory=lambda: ["IN"])
+
+    clarifications: list[Clarification] = Field(default_factory=list)
+    """Answers to questions a previous extraction raised.
+
+    These are folded into the source text rather than passed to the model as a
+    side channel, and that is the whole point. Every requirement here has to
+    quote the text it came from, and every quantity in it is checked against
+    that text - a threshold that appears in no source is a fabrication, which is
+    the failure mode this system exists to prevent. An answer supplied out of
+    band would let a real, human-supplied number look exactly like an invented
+    one. Folded in, an answered question simply becomes more stated input, and
+    the same checks apply to it unchanged.
+    """
 
 
 class SearchIn(BaseModel):
@@ -127,6 +147,31 @@ class SDLCOut(BaseModel):
     explanation: list[str]
 
 
+class BriefIn(BaseModel):
+    """A project brief in the stakeholder's own words."""
+
+    text: str = Field(min_length=1)
+    domain: str = "ekyc_onboarding"
+    jurisdictions: list[str] = Field(default_factory=lambda: ["IN"])
+    clarifications: list[Clarification] = Field(default_factory=list)
+
+
+class SDLCFromBriefOut(BaseModel):
+    """The recommendation, plus everything needed to challenge it.
+
+    The derived factor vector and the observations behind it are returned, not
+    just the ranking. A lifecycle recommendation an architect cannot re-derive
+    is one they cannot argue with, and the factors are the step where the
+    argument actually lives.
+    """
+
+    recommendation: SDLCOut
+    factors: dict[str, float]
+    observations: list[str]
+    requirements_extracted: int
+    unclear: list[str]
+
+
 class ImpactIn(BaseModel):
     short_code: str
     from_version: str
@@ -181,6 +226,8 @@ class HealthOut(BaseModel):
 
 __all__ = [
     "AffectedOut",
+    "BriefIn",
+    "Clarification",
     "ClauseOut",
     "ControlCoverageOut",
     "CoverageOut",
@@ -197,6 +244,7 @@ __all__ = [
     "ProjectIn",
     "ProjectOut",
     "RequirementOut",
+    "SDLCFromBriefOut",
     "SDLCOut",
     "SDLCRankOut",
     "SearchIn",

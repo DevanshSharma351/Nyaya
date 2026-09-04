@@ -31,7 +31,8 @@ from nyaya.core.enums import RiskLevel
 from nyaya.db import session_scope
 from nyaya.graph.gates import payload
 from nyaya.graph.state import WorkflowState
-from nyaya.mcda.sdlc import default_factors, recommend
+from nyaya.mcda.derive import factors_from_requirements
+from nyaya.mcda.sdlc import recommend
 from nyaya.rules.engine import evaluate, requirement_facts
 
 # Risk levels at which a requirement additionally needs security sign-off.
@@ -220,32 +221,9 @@ def node_sdlc_gate(state: WorkflowState) -> dict[str, Any]:
 
 
 def _derive_factors(state: WorkflowState) -> dict[str, float]:
-    """Derive SDLC decision factors from what the pipeline actually found.
-
-    Deliberately derived, not asked for. A factor vector supplied by hand is a
-    conclusion dressed as an input; deriving it from the requirement set means
-    the recommendation is traceable to evidence like everything else here.
-    """
-    requirements = state.get("requirements", [])
-    total = max(len(requirements), 1)
-
-    regulatory = sum(
-        1 for r in requirements if any(c.value == "regulatory" for c in r.requirement.categories)
-    ) / total
-    security = sum(
-        1 for r in requirements if any(c.value == "security" for c in r.requirement.categories)
-    ) / total
-    elevated = sum(1 for r in requirements if r.requirement.risk_level in _ELEVATED) / total
-    # Open questions signal requirements that are not yet settled.
-    unsettled = min(len(state.get("unclear", [])) / (total * 2), 1.0)
-
-    return default_factors(
-        regulatory_criticality=max(regulatory, 0.5),
-        security_risk=max(security, 0.4),
-        failure_consequence=max(elevated, 0.4),
-        requirement_stability=1.0 - unsettled,
-        change_frequency=unsettled,
-        formal_verification_need=max(elevated, 0.3),
+    """Derive SDLC decision factors from what this run actually found."""
+    return factors_from_requirements(
+        state.get("requirements", []), state.get("unclear", [])
     )
 
 

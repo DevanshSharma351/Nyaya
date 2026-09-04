@@ -1,22 +1,26 @@
 /* eslint-disable react-hooks/immutability --
- * Per-frame writes to Three.js transforms and to a point cloud's position
- * buffer. Animation code has to mutate; routing it through React state would
- * re-render the tree every frame.
- */
+ * Per-frame transform writes through refs; see the note in stage.tsx. */
 "use client";
 
 /**
- * Retrieval, drawn as what it is: a shortlist lifted out of a corpus.
+ * Retrieval as what it is: a shortlist lifted out of a corpus, in rank order.
  *
- * The dim field is the corpus - one point per indexed clause, so the size of
- * the haystack is not a metaphor but the actual number the API reports. The
- * bars that rise out of it are the results, ordered left to right by rank, with
- * height set by the cross-encoder's relevance score.
+ * The earlier version had a translucent floor disc seventeen units across. In a
+ * panel this wide and short it filled the entire frame, and the result was a
+ * pale grey dome with the actual data - a scatter of small points and a row of
+ * thin bars - invisible against it. It read as a rendering failure, which is
+ * the worst thing an empty state can do.
  *
- * That last detail is the reason this is worth drawing at all. Rank and score
- * disagree more often than people expect: a shortlist can be correctly ordered
- * and still have nothing in it worth reading, and a flat row of six bars says
- * so at a glance in a way a numbered list does not.
+ * What is drawn now: the corpus is a shallow band of marks, one per indexed
+ * clause, so the size of the haystack is the number the API reports rather than
+ * a metaphor. The results stand out of it as columns, ordered left to right by
+ * rank, with height set by the cross-encoder's score.
+ *
+ * The gap between the first column and the rest is the point. Measured on the
+ * labelled set, the top result is the governing clause 82% of the time and the
+ * second only 29%, so a first column that fails to separate from its neighbours
+ * is a shortlist worth doubting - which is legible here and invisible in a
+ * numbered list.
  */
 
 import { useEffect, useMemo, useRef } from "react";
@@ -25,36 +29,25 @@ import * as THREE from "three";
 import type { Clause } from "@/lib/api";
 import { useStageMotion } from "./stage";
 
-/*
- * Relevance is drawn as darkness rather than as a hue.
- *
- * Three colours for three relevance bands implies three kinds of result, and
- * there is only one kind: a result with a score. A continuous ramp from pale to
- * near-black carries the same information without inventing categories at
- * arbitrary thresholds, and it stays honest about the values in between.
- */
-const STRONG = new THREE.Color("#18181b");
-const WEAK = new THREE.Color("#d4d4d8");
+const FLOOR = -1.9;
+const LEAD = new THREE.Color("#18181b");
+const REST = new THREE.Color("#a1a1aa");
 
-function toneFor(relevance: number | null): THREE.Color {
-  const value = Math.max(0, Math.min(relevance ?? 0, 1));
-  return WEAK.clone().lerp(STRONG, value);
-}
-
-/** The corpus: one point per indexed clause, drifting on a shallow torus. */
+/** The corpus: one mark per indexed clause, on a shallow band. */
 function CorpusField({ size, searching }: { size: number; searching: boolean }) {
   const ref = useRef<THREE.Points>(null);
-  const motion = useStageMotion();
 
   const geometry = useMemo(() => {
     const count = Math.max(size, 24);
     const positions = new Float32Array(count * 3);
     for (let i = 0; i < count; i++) {
+      // Deterministic placement, so the corpus looks the same on every visit.
+      // A field that reshuffles per render is one nobody can recognise.
       const angle = i * Math.PI * (3 - Math.sqrt(5));
-      const radius = 6 + ((i * 7919) % 100) / 100 * 9;
+      const radius = 3.6 + ((i * 7919) % 100) / 100 * 4.4;
       positions[i * 3] = Math.cos(angle) * radius;
-      positions[i * 3 + 1] = -3.2 + (((i * 104729) % 100) / 100 - 0.5) * 1.4;
-      positions[i * 3 + 2] = Math.sin(angle) * radius;
+      positions[i * 3 + 1] = FLOOR - 0.3 + (((i * 104729) % 100) / 100) * 0.6;
+      positions[i * 3 + 2] = Math.sin(angle) * radius * 0.55;
     }
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
@@ -64,23 +57,22 @@ function CorpusField({ size, searching }: { size: number; searching: boolean }) 
   useFrame((_, delta) => {
     if (!ref.current) return;
     const dt = Math.min(delta, 0.05);
-    ref.current.rotation.y += dt * (searching ? 0.55 : 0.05);
+    // Spinning faster while a query runs is the one place in this interface
+    // where motion reports state, and it is deliberate: retrieval takes long
+    // enough that stillness reads as breakage.
+    ref.current.rotation.y += dt * (searching ? 0.6 : 0.07);
     const material = ref.current.material as THREE.PointsMaterial;
-    // Brightening while a query runs is the only place in this interface where
-    // motion reports state, and it is deliberate: a local model takes long
-    // enough that silence reads as breakage.
-    const target = searching ? 0.85 : 0.3;
+    const target = searching ? 0.95 : 0.5;
     material.opacity += (target - material.opacity) * (1 - Math.exp(-5 * dt));
-    ref.current.position.y = -motion.scroll.current * 1.6;
   });
 
   return (
     <points ref={ref} geometry={geometry}>
       <pointsMaterial
-        color="#a1a1aa"
-        size={0.075}
+        color="#8b8b93"
+        size={0.1}
         transparent
-        opacity={0.28}
+        opacity={0.5}
         sizeAttenuation
         depthWrite={false}
       />
@@ -88,7 +80,7 @@ function CorpusField({ size, searching }: { size: number; searching: boolean }) 
   );
 }
 
-function ResultBar({
+function ResultColumn({
   clause,
   index,
   total,
@@ -98,40 +90,42 @@ function ResultBar({
   total: number;
 }) {
   const ref = useRef<THREE.Mesh>(null);
-  const relevance = clause.relevance ?? 0;
-  // A floor on height, so a result with a near-zero score is still a visible
-  // object. A bar of height zero looks like a missing result, not a bad one.
-  const height = 0.6 + Math.max(relevance, 0) * 6.4;
-  const x = (index - (total - 1) / 2) * 2.1;
-  const color = useMemo(() => toneFor(clause.relevance), [clause.relevance]);
   const born = useRef(0);
+
+  // Cross-encoder scores on this corpus are small and very unevenly spread -
+  // a correct top result routinely scores 0.08. Mapping them linearly makes
+  // every column the same stub. The square root spreads the low end, where the
+  // differences that matter actually live, without inventing any ordering.
+  const score = Math.max(0, Math.min(clause.relevance ?? 0, 1));
+  const height = 0.5 + Math.sqrt(score) * 4.6;
+  const x = (index - (total - 1) / 2) * 1.6;
+  const colour = useMemo(
+    () => (index === 0 ? LEAD : REST.clone().lerp(LEAD, Math.max(0, 0.5 - index * 0.12))),
+    [index],
+  );
 
   useFrame((_, delta) => {
     if (!ref.current) return;
     const dt = Math.min(delta, 0.05);
-    // Bars grow from the field rather than appearing, staggered by rank, so
-    // the ordering is legible as it arrives.
     born.current = Math.min(born.current + dt, 4);
     const t = Math.max(0, Math.min((born.current - index * 0.07) / 0.55, 1));
     const eased = 1 - Math.pow(1 - t, 3);
-    // A bar at zero height is indistinguishable from a missing result, so the
-    // growth starts at a quarter rather than at nothing.
+    // Grows from a quarter, never from nothing: a column of zero height is
+    // indistinguishable from a missing result rather than a weak one.
     const grown = 0.25 + eased * 0.75;
     ref.current.scale.y = grown;
-    ref.current.position.y = -3.2 + (height * grown) / 2;
+    ref.current.position.y = FLOOR + (height * grown) / 2;
   });
 
   return (
-    <mesh ref={ref} position={[x, -3.2, 0]}>
-      <boxGeometry args={[1.15, height, 1.15]} />
+    <mesh ref={ref} position={[x, FLOOR, 0]}>
+      <boxGeometry args={[0.82, height, 0.82]} />
       <meshPhysicalMaterial
-        color={color}
-        roughness={0.45}
-        metalness={0.04}
-        clearcoat={0.5}
-        clearcoatRoughness={0.3}
-        transparent
-        opacity={0.92}
+        color={colour}
+        roughness={0.4}
+        metalness={0.05}
+        clearcoat={0.65}
+        clearcoatRoughness={0.28}
       />
     </mesh>
   );
@@ -151,26 +145,26 @@ export default function RetrievalScene({
   const groupRef = useRef<THREE.Group>(null);
 
   useEffect(() => {
-    camera.position.set(0, 6, 22);
+    camera.position.set(0, 1.6, 13);
   }, [camera]);
 
   useFrame((_, delta) => {
     const dt = Math.min(delta, 0.05);
+    const k = 1 - Math.exp(-3.5 * dt);
     const p = motion.scroll.current;
     const [px, py] = motion.pointer.current;
 
-    // Scrolling swings the camera from an oblique three-quarter view down to
-    // near eye level with the bars, where the heights can actually be compared.
-    // The scene is most decorative where the reader is reading prose, and most
-    // like a chart where they are reading results.
-    const k = 1 - Math.exp(-3.5 * dt);
-    camera.position.y += (6 - p * 5.5 + py * 1.2 - camera.position.y) * k;
-    camera.position.z += (22 - p * 4 - camera.position.z) * k;
-    camera.position.x += (px * 2.2 - camera.position.x) * k;
-    camera.lookAt(0, -1.4, 0);
+    // Scrolling drops the camera towards the tops of the columns, where their
+    // heights can be compared directly. The scene is most three-dimensional
+    // where the reader is reading prose, and most like a chart where they are
+    // reading results.
+    camera.position.y += (1.6 - p * 1.4 + py * 0.8 - camera.position.y) * k;
+    camera.position.z += (13 - p * 1.5 - camera.position.z) * k;
+    camera.position.x += (px * 1.4 - camera.position.x) * k;
+    camera.lookAt(0, -0.4, 0);
 
     if (groupRef.current) {
-      groupRef.current.rotation.y += (px * 0.16 - groupRef.current.rotation.y) * k;
+      groupRef.current.rotation.y += (px * 0.12 - groupRef.current.rotation.y) * k;
     }
   });
 
@@ -180,19 +174,13 @@ export default function RetrievalScene({
     <group ref={groupRef}>
       <CorpusField size={corpusSize} searching={busy} />
       {shown.map((clause, i) => (
-        <ResultBar
+        <ResultColumn
           key={clause.citation_key}
           clause={clause}
           index={i}
           total={shown.length}
         />
       ))}
-      {/* The floor the corpus and the results share, so the bars read as
-          standing on something rather than floating. */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -3.25, 0]}>
-        <circleGeometry args={[17, 64]} />
-        <meshBasicMaterial color="#71717a" transparent opacity={0.05} />
-      </mesh>
     </group>
   );
 }

@@ -15,7 +15,7 @@ import { useState } from "react";
 import { Block, ModuleShell, Rationale } from "@/components/chrome/ModuleShell";
 import { useTaskReporter } from "@/components/chrome/StatusIsland";
 import { Badge, Button, Empty, Failure } from "@/components/ui";
-import { api, type ExtractResult } from "@/lib/api";
+import { api, type Clarification, type ExtractResult } from "@/lib/api";
 
 const RequirementLayer = dynamic(
   () => import("@/components/scenes/RequirementLayer"),
@@ -41,7 +41,21 @@ export default function RequirementsPage() {
   const [busy, setBusy] = useState(false);
   const report = useTaskReporter();
 
-  async function run() {
+  // Answers to the questions the last extraction raised. Held here and sent
+  // back on the next run, where the API folds them into the source text - so an
+  // answered question becomes stated input and is checked exactly like the rest
+  // of the brief. An answer passed as a side channel would let a real,
+  // human-supplied number look identical to an invented one, which is the whole
+  // failure this module exists to catch.
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+
+  async function run(withAnswers = false) {
+    const clarifications: Clarification[] = withAnswers
+      ? Object.entries(answers)
+          .filter(([, answer]) => answer.trim())
+          .map(([question, answer]) => ({ question, answer: answer.trim() }))
+      : [];
+
     setBusy(true);
     setError(null);
     // Extraction runs on a local model and takes long enough that a still page
@@ -49,7 +63,7 @@ export default function RequirementsPage() {
     // while the reader is free to scroll or leave the module.
     report({ state: "running", label: "Extracting requirements", detail: "40–100s" });
     try {
-      const extracted = await api.extract(text);
+      const extracted = await api.extract(text, clarifications);
       setResult(extracted);
       const defects = extracted.requirements.reduce(
         (total, requirement) => total + requirement.defects.length,
@@ -60,6 +74,10 @@ export default function RequirementsPage() {
         label: `${extracted.requirements.length} requirements`,
         detail: defects > 0 ? `${defects} defects flagged` : "no defects detected",
       });
+      // Answers that have been folded into the brief are consumed. Keeping
+      // them would silently re-apply them to a brief the reader may have since
+      // rewritten.
+      if (clarifications.length > 0) setAnswers({});
     } catch (e) {
       setError((e as Error).message);
       setResult(null);
@@ -76,7 +94,7 @@ export default function RequirementsPage() {
       title="Stakeholder prose into testable obligations"
       lede="Rewritten into EARS form, with compounds split so each obligation can be approved and traced separately."
       scene={<RequirementLayer requirements={result?.requirements ?? null} />}
-      sceneCaption="Each requirement is drawn with as many segments as its EARS pattern has clauses — one for a ubiquitous requirement, two for an event-driven one, three for a complex one — so the parts of an obligation can be counted without reading it. The orbiting spheres are acceptance criteria; the red spikes are detected defects."
+      sceneCaption="Scroll the page and the field assembles. It starts scattered, which is what stakeholder language is, and resolves into one column per extracted requirement — a column is as tall as the requirement has acceptance criteria, its shade is the risk level, and the red share is how much of it is defective. Before extraction runs there is nothing to assemble into, so it stays scattered."
     >
       <Block>
         <div className="glass-raised specular p-6 lg:p-8">
@@ -96,7 +114,7 @@ export default function RequirementsPage() {
             }}
           />
           <div className="mt-4 flex flex-wrap items-center gap-3">
-            <Button onClick={run} disabled={busy || !text.trim()}>
+            <Button onClick={() => run(false)} disabled={busy || !text.trim()}>
               {busy ? "Extracting…" : "Extract requirements"}
             </Button>
             <span className="caption">runs a local model — expect 40–100 seconds</span>
@@ -206,24 +224,66 @@ export default function RequirementsPage() {
             ))}
 
             {result.unclear.length > 0 && (
-              <div className="glass mt-4 p-5">
+              <div className="glass mt-4 p-5 lg:p-6">
                 <div className="headline mb-2" style={{ color: "var(--review)" }}>
-                  Open questions
+                  Open questions — {result.unclear.length}
                 </div>
-                <p className="caption mb-3">
-                  Raised rather than answered. Inventing a missing value produces
-                  a requirement that reads as precise and was never agreed.
+                <p className="caption mb-4" style={{ maxWidth: 620 }}>
+                  Raised rather than answered. Inventing a missing value produces a
+                  requirement that reads as precise and was never agreed — which is
+                  worse than the vagueness it replaced, because it passes every
+                  check. Answer any of these and the extraction runs again with
+                  your answers folded into the brief, where the same quantity and
+                  provenance checks apply to them.
                 </p>
-                <ul
-                  className="body"
-                  style={{ paddingLeft: 18, margin: 0, color: "var(--text-secondary)" }}
-                >
+
+                <div className="flex flex-col gap-4">
                   {result.unclear.map((question) => (
-                    <li key={question} style={{ marginBottom: 6 }}>
-                      {question}
-                    </li>
+                    <div key={question}>
+                      <label
+                        className="body mb-1.5 block"
+                        style={{ fontWeight: 500 }}
+                        htmlFor={`answer-${question.slice(0, 24)}`}
+                      >
+                        {question}
+                      </label>
+                      <input
+                        id={`answer-${question.slice(0, 24)}`}
+                        value={answers[question] ?? ""}
+                        onChange={(event) =>
+                          setAnswers((current) => ({
+                            ...current,
+                            [question]: event.target.value,
+                          }))
+                        }
+                        placeholder="your answer, in your own words…"
+                        className="body w-full"
+                        style={{
+                          background: "var(--bg-inset)",
+                          border: "1px solid var(--hairline)",
+                          borderRadius: 10,
+                          padding: "9px 13px",
+                          color: "var(--text)",
+                          outline: "none",
+                        }}
+                      />
+                    </div>
                   ))}
-                </ul>
+                </div>
+
+                <div className="mt-5 flex flex-wrap items-center gap-3">
+                  <Button
+                    onClick={() => run(true)}
+                    disabled={
+                      busy || !Object.values(answers).some((a) => a.trim())
+                    }
+                  >
+                    Re-extract with these answers
+                  </Button>
+                  <span className="caption">
+                    unanswered questions are left open rather than guessed
+                  </span>
+                </div>
               </div>
             )}
           </>

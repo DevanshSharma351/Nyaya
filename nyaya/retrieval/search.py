@@ -87,16 +87,28 @@ async def search(
 
     shortlist = candidates[: opts.candidates]
 
+    # Attach enclosing clauses *before* reranking, not after.
+    #
+    # A leaf sub-clause is frequently meaningless alone - "screening shall be
+    # performed prior to activation" never says what is being screened against,
+    # because that is in the parent. This was already known: supplying the
+    # parent moved an entailment score on exactly that pair from 0.004 to 0.994.
+    # The same omission was left in the reranking step, where the cross-encoder
+    # scored every candidate as a bare fragment.
+    #
+    # Measured on the 34-query labelled set, attaching context before reranking
+    # moves MRR from 0.725 to 0.855 and hit@1 from 0.618 to 0.794. The failure it
+    # fixes is systematic rather than random: without a parent the reranker
+    # prefers the general parent clause over the specific sub-clause that
+    # actually governs, because the parent is the half that reads like a
+    # complete statement. Nine of the fourteen queries whose top result changed
+    # were of exactly that shape.
+    await load_context(session, shortlist)
+
     if opts.use_reranker and shortlist and reranker_available():
         results = await rerank(query, list(shortlist), top_n=opts.top_k)
     else:
         results = shortlist[: opts.top_k]
-
-    # Attach enclosing clauses. A leaf sub-clause is frequently meaningless
-    # alone - "screening shall be performed prior to activation" never says what
-    # is screened against - so both entailment checking and the evidence shown to
-    # a model need the parent to read the obligation correctly.
-    await load_context(session, results)
 
     return RetrievalResult(results=results, dense_count=len(dense), lexical_count=len(lexical))
 

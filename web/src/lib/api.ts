@@ -43,7 +43,10 @@ export type SourceDocument = {
   title: string;
   issuer: string;
   jurisdiction: string;
+  /** The version currently in force. */
   version: string;
+  /** Every version held, in order. Two or more means change impact can run. */
+  versions: string[];
   effective_from: string | null;
   clauses: number;
 };
@@ -101,6 +104,16 @@ export type SDLCRank = {
   drivers: Record<string, number>;
 };
 
+export type Clarification = { question: string; answer: string };
+
+export type SDLCFromBrief = {
+  recommendation: SDLC;
+  factors: Record<string, number>;
+  observations: string[];
+  requirements_extracted: number;
+  unclear: string[];
+};
+
 export type SDLC = {
   recommended: string;
   ranked: SDLCRank[];
@@ -152,15 +165,20 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ query, top_k }),
     }),
-  extract: (text: string) =>
+  extract: (text: string, clarifications: Clarification[] = []) =>
     request<ExtractResult>("/analysis/extract", {
       method: "POST",
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, clarifications }),
     }),
   coverage: (text: string) =>
     request<Coverage[]>("/analysis/coverage", {
       method: "POST",
       body: JSON.stringify({ text }),
+    }),
+  sdlcFromBrief: (text: string, clarifications: Clarification[] = []) =>
+    request<SDLCFromBrief>("/analysis/sdlc/from-brief", {
+      method: "POST",
+      body: JSON.stringify({ text, clarifications }),
     }),
   sdlc: (overrides: Record<string, number>) =>
     request<SDLC>("/analysis/sdlc", {

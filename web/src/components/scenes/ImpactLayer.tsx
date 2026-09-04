@@ -8,7 +8,7 @@ import type { Impact } from "@/lib/api";
 
 export default function ImpactLayer({ impact }: { impact: Impact | null }) {
   return (
-    <Stage camera={{ position: [0, 5, 22], fov: 50 }}>
+    <Stage camera={{ position: [0, 3, 15], fov: 50 }}>
       <Rig />
       <ImpactScene impact={impact} />
     </Stage>

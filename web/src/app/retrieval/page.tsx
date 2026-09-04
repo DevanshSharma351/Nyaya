@@ -12,7 +12,8 @@ import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 import { Block, ModuleShell, Rationale } from "@/components/chrome/ModuleShell";
 import { useTaskReporter } from "@/components/chrome/StatusIsland";
-import { Badge, Button, Empty, Failure } from "@/components/ui";
+import ClauseResult from "@/components/ClauseResult";
+import { Button, Empty, Failure } from "@/components/ui";
 import { api, type Clause } from "@/lib/api";
 
 const RetrievalLayer = dynamic(() => import("@/components/scenes/RetrievalLayer"), {
@@ -39,6 +40,22 @@ export default function RetrievalPage() {
     api
       .health()
       .then((h) => !cancelled && setCorpusSize(h.corpus_clauses))
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // The first example runs on arrival. Retrieval is fast enough for that - it
+  // is a vector lookup and a rerank, not a language model - and a module that
+  // opens with an empty panel and an empty result list gives a reader nothing
+  // to judge. Landing on a worked example is also how the scene becomes
+  // legible: with no results there are no columns in it.
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .search(EXAMPLES[0], 6)
+      .then((found) => !cancelled && setResults(found))
       .catch(() => undefined);
     return () => {
       cancelled = true;
@@ -134,48 +151,39 @@ export default function RetrievalPage() {
           <Empty>Run a search to see which clauses govern it.</Empty>
         )}
         {results?.map((clause, i) => (
-          <article
+          <ClauseResult
             key={clause.citation_key}
-            className="rise glass mb-3 p-5"
-            style={{ animationDelay: `${i * 0.045}s` }}
-          >
-              <div className="mb-2 flex flex-wrap items-center gap-2">
-                <span className="mono" style={{ color: "var(--clause)" }}>
-                  {clause.citation_key}
-                </span>
-                <Badge>{clause.jurisdiction}</Badge>
-                {clause.relevance !== null && (
-                  <Badge
-                    tone={
-                      clause.relevance > 0.7
-                        ? "var(--confirmed)"
-                        : clause.relevance > 0.3
-                          ? "var(--review)"
-                          : "var(--text-tertiary)"
-                    }
-                  >
-                    relevance {clause.relevance.toFixed(3)}
-                  </Badge>
-                )}
-              </div>
-              {clause.heading && <div className="headline mb-1">{clause.heading}</div>}
-            <p className="body m-0" style={{ color: "var(--text-secondary)" }}>
-              {clause.text}
-            </p>
-          </article>
+            clause={clause}
+            rank={i + 1}
+            delay={i * 0.045}
+          />
         ))}
         {results?.length === 0 && <Empty>No clause in the corpus matched.</Empty>}
 
         <Rationale>
-          Lexical fusion is switched off, and that was a measurement rather than
-          a preference. The first implementation conjoined every query term, so a
-          fifteen-word question demanded a single clause containing all nine
-          stemmed terms and returned nothing at all; rewritten as a disjunction
-          ranked by proximity it reached MRR 0.249, still below dense retrieval
-          alone on this set. Fusing a weaker signal in made the ranking worse, so
-          it is off until a query mix exists where it helps. The component
-          imported cleanly and returned well-formed empty lists throughout —
-          only a labelled set exposed it.
+          <p className="m-0">
+            Candidates are reranked with their enclosing clauses attached. Scoring
+            a bare sub-clause asks the model to judge a fragment — “screening shall
+            be performed prior to activation” never says what is being screened
+            against, because that is in the parent — and the reranker responded by
+            preferring the general parent clause over the specific sub-clause that
+            actually governs. Attaching context moved MRR from 0.723 to 0.819 and
+            recall@10 from 0.779 to 0.824 on the labelled set.
+          </p>
+          <p className="mt-3 mb-0">
+            Lexical fusion is switched off, by measurement rather than preference.
+            The first implementation conjoined every query term, so a fifteen-word
+            question demanded one clause containing all nine stemmed terms and
+            returned nothing; rewritten as a disjunction it reached MRR 0.249,
+            still below dense retrieval alone. Fusing a weaker signal in made the
+            ranking worse.
+          </p>
+          <p className="mt-3 mb-0">
+            The scores themselves are weak evidence taken alone — the bands above
+            are fitted on the same 34-query set they are reported on, with a
+            single annotator, so treat them as optimistic. Rank is the stronger
+            signal and is why it leads.
+          </p>
         </Rationale>
       </Block>
     </ModuleShell>

@@ -16,7 +16,7 @@ export default function RetrievalLayer({
   corpusSize: number;
 }) {
   return (
-    <Stage camera={{ position: [0, 6, 22], fov: 48 }}>
+    <Stage camera={{ position: [0, 1.6, 13], fov: 48 }}>
       <Rig />
       <RetrievalScene clauses={clauses} busy={busy} corpusSize={corpusSize} />
     </Stage>

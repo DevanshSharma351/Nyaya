@@ -85,7 +85,7 @@ export default function CoveragePage() {
       title="Which mandatory controls nothing covers"
       lede="Every control in the pack cites the clause that establishes it — one without a citation is rejected before the pack loads."
       scene={<CoverageLayer controls={report?.controls ?? null} />}
-      sceneCaption="The pack as a surface. A covered control is a solid tile standing proud of it; a gap is an open ring below it, red for a blocker and amber for a major. A coverage ratio invites you to feel good about a large number, but the number is not the finding — whether the gaps cluster in one area of the pack or scatter across it is the difference between one piece of work and twelve, and that is visible here and invisible in a percentage."
+      sceneCaption="Your requirements are the column on the left; the control pack is the grid on the right. A line means a requirement satisfies a control. A control is a gap for exactly one reason — nothing points at it — so the gaps are the rings with no thread reaching them, red for a blocker and amber for a major. The ratio below tells you how many; this tells you why, and shows whether the unreached controls cluster in one area of the pack or scatter across it. That is the difference between one piece of work and twelve."
     >
       <Block>
         <div className="glass-raised specular p-6 lg:p-8">

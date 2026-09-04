@@ -12,7 +12,7 @@ export default function RequirementLayer({
   requirements: ExtractedRequirement[] | null;
 }) {
   return (
-    <Stage camera={{ position: [0, 2, 22], fov: 50 }}>
+    <Stage camera={{ position: [0, 0, 16], fov: 50 }}>
       <Rig />
       <RequirementScene requirements={requirements} />
     </Stage>

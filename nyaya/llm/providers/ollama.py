@@ -37,10 +37,22 @@ class OllamaProvider(LLMProvider):
     async def aclose(self) -> None:
         await self._client.aclose()
 
+    # Connection failures are worth retrying; timeouts are not.
+    #
+    # `httpx.TransportError` covers both, and including timeouts made a slow
+    # call catastrophic: the read timeout is 300 seconds, so a request that
+    # stalled - which is what happens when a second generation queues behind a
+    # first, since Ollama serialises per model - burned fifteen minutes across
+    # three attempts before surfacing anything. The caller has no way to
+    # distinguish that from a hang.
+    #
+    # A timeout also carries information a retry destroys: the server is busy or
+    # the request is too large for it, and repeating the identical request
+    # immediately is the one response guaranteed not to help.
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((httpx.TransportError, httpx.HTTPStatusError)),
+        retry=retry_if_exception_type((httpx.ConnectError, httpx.HTTPStatusError)),
         reraise=True,
     )
     async def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:

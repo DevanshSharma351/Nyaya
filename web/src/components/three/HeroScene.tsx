@@ -194,6 +194,21 @@ export default function HeroScene() {
     points.rotation.y += dt * 0.06;
     if (linesRef.current) linesRef.current.rotation.y = points.rotation.y;
 
+    // Fade out once the hero has been scrolled past.
+    //
+    // The canvas is fixed, so without this the field follows the reader down
+    // the page and sits behind the architecture diagram and the module grid -
+    // five hundred moving dots behind body text, which is exactly the kind of
+    // ornament-over-content this interface is meant to avoid. It belongs to the
+    // hero, so it leaves with the hero.
+    const departed = Math.max(0, Math.min((motion.scroll.current - 0.22) / 0.18, 1));
+    const material = points.material as THREE.PointsMaterial;
+    material.opacity = 0.92 * (1 - departed);
+    if (linesRef.current) {
+      const lineMaterial = linesRef.current.material as THREE.LineBasicMaterial;
+      lineMaterial.opacity *= 1 - departed;
+    }
+
     const [px, py] = motion.pointer.current;
     // The camera stays near the origin and the cloud sits to its right. Moving
     // the camera to the offset as well would cancel it out and re-centre the

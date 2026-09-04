@@ -12,7 +12,7 @@ export default function CoverageLayer({
   controls: ControlCoverage[] | null;
 }) {
   return (
-    <Stage camera={{ position: [0, 17, 0.1], fov: 46 }}>
+    <Stage camera={{ position: [0, 0, 15], fov: 46 }}>
       <Rig />
       <CoverageScene controls={controls} />
     </Stage>

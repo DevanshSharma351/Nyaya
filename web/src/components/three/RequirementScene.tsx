@@ -1,170 +1,77 @@
 /* eslint-disable react-hooks/immutability --
- * Per-frame transform writes through refs; see the note in stage.tsx. */
+ * Positions for ~700 particles are written into a typed array in place every
+ * frame. That is the only way to animate a point cloud; the alternative is
+ * reallocating a Float32Array sixty times a second.
+ */
 "use client";
 
 /**
- * Extracted requirements, drawn as the structures they are.
+ * Prose becoming structure, driven by scroll.
  *
- * EARS patterns are not labels, they are shapes: a ubiquitous requirement is
- * one clause, an event-driven one is a trigger and a response, a complex one
- * adds a state precondition. So each requirement is drawn as a chain with
- * exactly that many segments, and the reader can count the parts of an
- * obligation without reading it.
+ * The previous scene here drew each requirement as a chain of blocks with
+ * orbiting satellites. It encoded real properties - EARS arity, acceptance
+ * criteria, defects - but at panel size it was a cluster of small shapes that
+ * had to be decoded against a caption, and before extraction ran it was an
+ * invisible cloud of grey dots.
  *
- * The satellites orbiting a chain are its acceptance criteria - a requirement
- * with none is testable only in principle - and the red spikes are detected
- * defects. A fabricated quantity is the one that matters most and is the least
- * visible in prose, because it reads as precision.
+ * This shows the transformation the module performs instead of the output of
+ * it. The particles begin scattered, which is what stakeholder language
+ * actually is, and scroll pulls them into one column per extracted
+ * requirement. Nothing about the assembly is decorative: the number of columns
+ * is the number of requirements, a column's height is its acceptance criteria,
+ * and the red particles are detected defects. Before extraction runs there is
+ * nothing to assemble into, so the cloud stays scattered and drifting - which
+ * is a truthful empty state rather than a blank one.
  */
 
-import { useEffect, useMemo, useRef } from "react";
+import { useMemo, useRef } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import type { ExtractedRequirement } from "@/lib/api";
 import { useStageMotion } from "./stage";
 
-/*
- * Risk as weight, with one exception.
+const COUNT = 700;
+
+const RISK_COLOR: Record<string, THREE.Color> = {
+  low: new THREE.Color("#c4c4c8"),
+  medium: new THREE.Color("#a1a1aa"),
+  high: new THREE.Color("#52525b"),
+  critical: new THREE.Color("#18181b"),
+};
+const DEFECT = new THREE.Color("#b42318");
+const LOOSE = new THREE.Color("#c4c4c8");
+
+/**
+ * A deterministic stand-in for `Math.random`.
  *
- * Low, medium and high are shades: they are a scale, and a scale should look
- * like one. Critical gets the only colour in the scene, because it is the only
- * level at which a reader is being asked to stop and do something.
+ * The scatter has to be identical on every load, for the same reason the corpus
+ * graph pins its documents: a picture that rearranges itself each visit is one
+ * you cannot remember, and it would also make every screenshot and test run
+ * subtly different.
  */
-const RISK_COLOR: Record<string, string> = {
-  low: "#d4d4d8",
-  medium: "#8b8b93",
-  high: "#52525b",
-  critical: "#b42318",
-};
-
-/** How many clauses the EARS pattern has. This is the pattern's definition. */
-const ARITY: Record<string, number> = {
-  ubiquitous: 1,
-  event_driven: 2,
-  "event-driven": 2,
-  state_driven: 2,
-  "state-driven": 2,
-  unwanted: 2,
-  optional: 2,
-  complex: 3,
-};
-
-function Chain({
-  requirement,
-  index,
-  total,
-}: {
-  requirement: ExtractedRequirement;
-  index: number;
-  total: number;
-}) {
-  const groupRef = useRef<THREE.Group>(null);
-  const born = useRef(0);
-  const motion = useStageMotion();
-
-  const segments = ARITY[requirement.ears_pattern] ?? 1;
-  const color = RISK_COLOR[requirement.risk_level] ?? "#0a84ff";
-  const criteria = Math.min(requirement.acceptance_criteria.length, 5);
-  const defects = Math.min(requirement.defects.length, 4);
-
-  // Requirements are laid out along a shallow arc rather than a line, so the
-  // ones behind are not hidden by the ones in front.
-  const angle = ((index - (total - 1) / 2) / Math.max(total, 1)) * 1.5;
-  const x = Math.sin(angle) * 11;
-  const z = -Math.cos(angle) * 4 - index * 0.4;
-
-  useFrame((_, delta) => {
-    if (!groupRef.current) return;
-    const dt = Math.min(delta, 0.05);
-    born.current = Math.min(born.current + dt, 4);
-    const t = Math.max(0, Math.min((born.current - index * 0.11) / 0.7, 1));
-    const eased = 1 - Math.pow(1 - t, 3);
-    // Never starts from nothing; see the note in LifecycleScene.
-    groupRef.current.scale.setScalar(0.35 + eased * 0.65);
-    groupRef.current.position.y = (1 - eased) * -3;
-    // Each chain rotates at its own rate so the group never reads as one rigid
-    // object being spun.
-    groupRef.current.rotation.y += dt * (0.16 + (index % 3) * 0.05);
-    groupRef.current.rotation.x = motion.scroll.current * 0.5;
-  });
-
-  return (
-    <group ref={groupRef} position={[x, 0, z]}>
-      {Array.from({ length: segments }, (_, s) => (
-        <mesh key={s} position={[0, (s - (segments - 1) / 2) * 1.35, 0]}>
-          <boxGeometry args={[1.5, 1.05, 1.5]} />
-          <meshPhysicalMaterial
-            color={color}
-            roughness={0.44}
-            metalness={0.04}
-            clearcoat={0.55}
-            clearcoatRoughness={0.3}
-            transparent
-            opacity={0.95}
-          />
-        </mesh>
-      ))}
-
-      {Array.from({ length: criteria }, (_, c) => {
-        const a = (c / Math.max(criteria, 1)) * Math.PI * 2;
-        return (
-          <mesh key={`c${c}`} position={[Math.cos(a) * 2.3, -0.2, Math.sin(a) * 2.3]}>
-            <sphereGeometry args={[0.19, 16, 16]} />
-            <meshBasicMaterial color="#71717a" transparent opacity={0.7} />
-          </mesh>
-        );
-      })}
-
-      {Array.from({ length: defects }, (_, d) => {
-        const a = (d / Math.max(defects, 1)) * Math.PI * 2 + 0.4;
-        return (
-          <mesh
-            key={`d${d}`}
-            position={[Math.cos(a) * 1.4, 1.6, Math.sin(a) * 1.4]}
-            rotation={[0, 0, Math.cos(a) * 0.5]}
-          >
-            <coneGeometry args={[0.16, 0.9, 8]} />
-            <meshBasicMaterial color="#b42318" />
-          </mesh>
-        );
-      })}
-    </group>
-  );
+function noise(index: number, salt: number): number {
+  const x = Math.sin(index * 127.1 + salt * 311.7) * 43758.5453;
+  return x - Math.floor(x) - 0.5;
 }
 
-/** Before extraction runs: unstructured prose, drifting. */
-function Unstructured() {
-  const ref = useRef<THREE.Points>(null);
-  const geometry = useMemo(() => {
-    const count = 520;
-    const positions = new Float32Array(count * 3);
-    for (let i = 0; i < count; i++) {
-      positions[i * 3] = (((i * 7919) % 200) / 100 - 1) * 14;
-      positions[i * 3 + 1] = (((i * 104729) % 200) / 100 - 1) * 6;
-      positions[i * 3 + 2] = (((i * 15485863) % 200) / 100 - 1) * 8;
-    }
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    return geometry;
-  }, []);
-
-  useFrame((_, delta) => {
-    if (!ref.current) return;
-    ref.current.rotation.y += Math.min(delta, 0.05) * 0.05;
-  });
-
-  return (
-    <points ref={ref} geometry={geometry}>
-      <pointsMaterial
-        color="#a1a1aa"
-        size={0.07}
-        transparent
-        opacity={0.5}
-        sizeAttenuation
-        depthWrite={false}
-      />
-    </points>
+/** A round, soft sprite. `pointsMaterial` draws squares, which read as dust. */
+function makeDotTexture(): THREE.Texture {
+  const size = 64;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const context = canvas.getContext("2d")!;
+  const gradient = context.createRadialGradient(
+    size / 2, size / 2, 0, size / 2, size / 2, size / 2,
   );
+  gradient.addColorStop(0, "rgba(255,255,255,1)");
+  gradient.addColorStop(0.45, "rgba(255,255,255,0.85)");
+  gradient.addColorStop(1, "rgba(255,255,255,0)");
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, size, size);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.needsUpdate = true;
+  return texture;
 }
 
 export default function RequirementScene({
@@ -172,40 +79,145 @@ export default function RequirementScene({
 }: {
   requirements: ExtractedRequirement[] | null;
 }) {
-  const { camera } = useThree();
+  const pointsRef = useRef<THREE.Points>(null);
   const motion = useStageMotion();
+  const { camera } = useThree();
+  const dot = useMemo(() => makeDotTexture(), []);
 
-  useEffect(() => {
-    camera.position.set(0, 2, 22);
-  }, [camera]);
+  const scattered = useMemo(() => {
+    const positions = new Float32Array(COUNT * 3);
+    for (let i = 0; i < COUNT; i++) {
+      positions[i * 3] = noise(i, 1) * 20;
+      positions[i * 3 + 1] = noise(i, 2) * 7;
+      positions[i * 3 + 2] = noise(i, 3) * 8;
+    }
+    return positions;
+  }, []);
+
+  // The ordered arrangement, rebuilt whenever the extraction result changes.
+  // Recomputing it per frame would make the columns shimmer; computing it once
+  // means the assembly converges on a fixed target.
+  const { ordered, colours, hasStructure } = useMemo(() => {
+    const ordered = new Float32Array(COUNT * 3);
+    const colours = new Float32Array(COUNT * 3);
+    const list = requirements ?? [];
+
+    if (list.length === 0) {
+      for (let i = 0; i < COUNT; i++) {
+        ordered.set([scattered[i * 3], scattered[i * 3 + 1], scattered[i * 3 + 2]], i * 3);
+        colours.set([LOOSE.r, LOOSE.g, LOOSE.b], i * 3);
+      }
+      return { ordered, colours, hasStructure: false };
+    }
+
+    const columns = Math.min(list.length, 8);
+    const perColumn = Math.floor(COUNT / columns);
+
+    for (let i = 0; i < COUNT; i++) {
+      const column = Math.min(Math.floor(i / perColumn), columns - 1);
+      const requirement = list[column];
+      const withinColumn = i - column * perColumn;
+
+      // A column is as tall as the requirement is testable: one band per
+      // acceptance criterion, plus the statement itself. A requirement with no
+      // criteria is a short column, which is exactly what it is in review.
+      const bands = Math.max(requirement.acceptance_criteria.length + 1, 1);
+      const height = 0.9 + bands * 0.55;
+      const x = (column - (columns - 1) / 2) * 2.4;
+      const t = (withinColumn % perColumn) / perColumn;
+
+      // A slight helix rather than a straight line, so the columns read as
+      // volumes and not as flat bars seen edge-on.
+      const angle = t * Math.PI * 4 + column;
+      const radius = 0.42 + noise(i, 5) * 0.22;
+      ordered[i * 3] = x + Math.cos(angle) * radius;
+      ordered[i * 3 + 1] = -height / 2 + t * height;
+      ordered[i * 3 + 2] = Math.sin(angle) * radius;
+
+      // Defect share. A requirement with defects has that fraction of its
+      // column coloured, so the amount of red is proportional to how much is
+      // wrong with it rather than being a single marker.
+      const defectShare = Math.min(requirement.defects.length * 0.16, 0.6);
+      const colour =
+        t > 1 - defectShare
+          ? DEFECT
+          : (RISK_COLOR[requirement.risk_level] ?? RISK_COLOR.medium);
+      colours.set([colour.r, colour.g, colour.b], i * 3);
+    }
+    return { ordered, colours, hasStructure: true };
+  }, [requirements, scattered]);
+
+  const geometry = useMemo(() => {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(scattered.slice(), 3));
+    geometry.setAttribute("color", new THREE.BufferAttribute(new Float32Array(COUNT * 3), 3));
+    return geometry;
+  }, [scattered]);
 
   useFrame((_, delta) => {
     const dt = Math.min(delta, 0.05);
-    const k = 1 - Math.exp(-3.5 * dt);
-    const p = motion.scroll.current;
+    const points = pointsRef.current;
+    if (!points) return;
+
+    // Assembly completes by 70% of the page, so the last section is read
+    // against a settled scene rather than a still-moving one. With nothing
+    // extracted there is no structure to move towards, so the cloud stays put.
+    const p = hasStructure ? Math.min(motion.scroll.current / 0.7, 1) : 0;
+    const eased = p * p * (3 - 2 * p);
+    const time = motion.age.current;
+
+    const positionAttr = points.geometry.attributes.position as THREE.BufferAttribute;
+    const colourAttr = points.geometry.attributes.color as THREE.BufferAttribute;
+    const positions = positionAttr.array as Float32Array;
+    const colourArray = colourAttr.array as Float32Array;
+
+    for (let i = 0; i < COUNT; i++) {
+      const k = i * 3;
+      // Sway is largest while scattered and almost gone once ordered.
+      // Structure that still wobbles does not read as settled.
+      const sway = (1 - eased) * 0.55;
+      positions[k] =
+        scattered[k] + (ordered[k] - scattered[k]) * eased + Math.sin(time * 0.5 + i) * sway;
+      positions[k + 1] =
+        scattered[k + 1] +
+        (ordered[k + 1] - scattered[k + 1]) * eased +
+        Math.cos(time * 0.42 + i * 1.7) * sway;
+      positions[k + 2] =
+        scattered[k + 2] +
+        (ordered[k + 2] - scattered[k + 2]) * eased +
+        Math.sin(time * 0.37 + i * 0.9) * sway;
+
+      // Colour arrives with the structure: unstructured text has no risk level
+      // and no defects, so claiming one before extraction would be a lie.
+      colourArray[k] = LOOSE.r + (colours[k] - LOOSE.r) * eased;
+      colourArray[k + 1] = LOOSE.g + (colours[k + 1] - LOOSE.g) * eased;
+      colourArray[k + 2] = LOOSE.b + (colours[k + 2] - LOOSE.b) * eased;
+    }
+    positionAttr.needsUpdate = true;
+    colourAttr.needsUpdate = true;
+
+    points.rotation.y += dt * 0.05 * (1 - eased * 0.7);
+
     const [px, py] = motion.pointer.current;
-    camera.position.z += (22 - p * 6 - camera.position.z) * k;
-    camera.position.y += (2 + py * 1.4 + p * 3 - camera.position.y) * k;
-    camera.position.x += (px * 2.4 - camera.position.x) * k;
+    const lerp = 1 - Math.exp(-3 * dt);
+    camera.position.x += (px * 2 - camera.position.x) * lerp;
+    camera.position.y += (py * 1.2 - camera.position.y) * lerp;
+    camera.position.z += (16 - eased * 4 - camera.position.z) * lerp;
     camera.lookAt(0, 0, 0);
   });
 
-  const shown = requirements?.slice(0, 7) ?? [];
-
   return (
-    <group>
-      {shown.length === 0 ? (
-        <Unstructured />
-      ) : (
-        shown.map((requirement, i) => (
-          <Chain
-            key={requirement.statement}
-            requirement={requirement}
-            index={i}
-            total={shown.length}
-          />
-        ))
-      )}
-    </group>
+    <points ref={pointsRef} geometry={geometry}>
+      <pointsMaterial
+        map={dot}
+        alphaMap={dot}
+        size={0.2}
+        vertexColors
+        transparent
+        opacity={0.92}
+        sizeAttenuation
+        depthWrite={false}
+      />
+    </points>
   );
 }

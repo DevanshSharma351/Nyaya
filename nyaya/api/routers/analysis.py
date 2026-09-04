@@ -10,20 +10,38 @@ from nyaya.agents.schemas import ExtractionContext
 from nyaya.api.deps import db_session
 from nyaya.api.schemas import (
     AffectedOut,
+    BriefIn,
     ControlCoverageOut,
     CoverageOut,
     ExtractIn,
     FactorsIn,
     ImpactIn,
     ImpactOut,
+    SDLCFromBriefOut,
     SDLCOut,
     SDLCRankOut,
 )
 from nyaya.graph.impact import analyse_change
+from nyaya.mcda.derive import derive
 from nyaya.mcda.sdlc import default_factors, recommend
 from nyaya.rules.engine import evaluate, requirement_facts
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
+
+
+def _with_clarifications(payload: ExtractIn | BriefIn) -> str:
+    """Fold answered questions back into the source text.
+
+    Appended as stated input, attributed to the stakeholder, so extraction and
+    every downstream check treat them exactly as they treat the original brief.
+    """
+    clarifications = getattr(payload, "clarifications", [])
+    if not clarifications:
+        return payload.text
+    answered = "\n".join(
+        f"Clarification — {c.question.rstrip('?')}? {c.answer}" for c in clarifications
+    )
+    return f"{payload.text}\n\n{answered}"
 
 
 @router.post("/extract")
@@ -35,7 +53,7 @@ async def extract_requirements(payload: ExtractIn):
     statement, not that weak statements are quietly dropped.
     """
     result = await extract(
-        payload.text,
+        _with_clarifications(payload),
         context=ExtractionContext(
             domain=payload.domain, jurisdictions=payload.jurisdictions
         ),
@@ -110,14 +128,8 @@ async def control_coverage(payload: ExtractIn):
     ]
 
 
-@router.post("/sdlc", response_model=SDLCOut)
-async def recommend_sdlc(payload: FactorsIn):
-    """Rank lifecycle models against a project's factor profile."""
-    unknown = set(payload.overrides) - set(default_factors())
-    if unknown:
-        raise HTTPException(422, f"unknown factors: {sorted(unknown)}")
-
-    result = recommend(default_factors(**payload.overrides))
+def _to_sdlc_out(result) -> SDLCOut:
+    """Shape a ranking result for the wire."""
     return SDLCOut(
         recommended=result.recommended.value,
         ranked=[
@@ -134,6 +146,49 @@ async def recommend_sdlc(payload: FactorsIn):
         consistency_ratio=round(result.weights.consistency_ratio, 4),
         notes=result.notes,
         explanation=result.ranking.explain(),
+    )
+
+
+@router.post("/sdlc", response_model=SDLCOut)
+async def recommend_sdlc(payload: FactorsIn):
+    """Rank lifecycle models against a factor profile supplied directly."""
+    unknown = set(payload.overrides) - set(default_factors())
+    if unknown:
+        raise HTTPException(422, f"unknown factors: {sorted(unknown)}")
+    return _to_sdlc_out(recommend(default_factors(**payload.overrides)))
+
+
+@router.post("/sdlc/from-brief", response_model=SDLCFromBriefOut)
+async def recommend_sdlc_from_brief(payload: BriefIn):
+    """Recommend a lifecycle for a project described in plain language.
+
+    This is the path that makes the recommendation mean something. Setting the
+    factor sliders by hand is choosing the answer and then computing it; here
+    the brief is extracted into requirements first, and the factors are read off
+    what was actually found - how much of it is regulatory, how much is high
+    risk, how many questions the brief left open.
+
+    It runs the extraction agent, so it is slow: a local model takes forty to a
+    hundred seconds on a brief of a few sentences. That cost is the point. A
+    recommendation produced instantly from a text box would be the model's
+    opinion about the words, not a derivation from their content.
+    """
+    if not payload.text.strip():
+        raise HTTPException(422, "a brief is required")
+
+    result = await extract(
+        _with_clarifications(payload),
+        context=ExtractionContext(
+            domain=payload.domain, jurisdictions=payload.jurisdictions
+        ),
+    )
+    derivation = derive(result.requirements, result.unclear)
+    return SDLCFromBriefOut(
+        recommendation=_to_sdlc_out(recommend(derivation.factors)),
+        factors=derivation.factors,
+        observations=derivation.observations,
+        requirements_extracted=len(result.requirements),
+        unclear=result.unclear,
     )
 
 

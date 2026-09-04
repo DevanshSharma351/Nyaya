@@ -11,6 +11,11 @@ to the compliance agent; a clause ranked 8th is usually outside it. Recall is
 already high after fusion, so the remaining gains come from precision at the
 very top of the list.
 
+Candidates are scored with their enclosing clauses attached. Scoring a bare
+sub-clause asks the model to judge a fragment: measured on the labelled set,
+that cost 0.13 MRR and 0.18 hit@1, almost all of it the reranker preferring a
+general parent clause over the specific sub-clause that governs.
+
 The model is loaded lazily and cached, because importing torch and materialising
 weights costs seconds that unit tests should not pay.
 """
@@ -63,7 +68,10 @@ def rerank_sync(
     settings = get_settings()
     model = _load(model_name or settings.reranker_model)
 
-    pairs = [(query, c.display) for c in candidates]
+    # `contextual`, not `display`: a sub-clause is scored together with the
+    # clauses that enclose it. Where no context has been loaded the two are
+    # identical, so this is safe for callers that rerank a bare shortlist.
+    pairs = [(query, c.contextual) for c in candidates]
     scores = model.predict(pairs, show_progress_bar=False)
 
     for candidate, score in zip(candidates, scores, strict=True):

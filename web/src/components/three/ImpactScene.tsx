@@ -55,7 +55,7 @@ export default function ImpactScene({ impact }: { impact: Impact | null }) {
   const groupRef = useRef<THREE.Group>(null);
 
   useEffect(() => {
-    camera.position.set(0, 5, 22);
+    camera.position.set(0, 3, 15);
   }, [camera]);
 
   const { sources, targets, links } = useMemo(() => {
@@ -128,8 +128,11 @@ export default function ImpactScene({ impact }: { impact: Impact | null }) {
     const k = 1 - Math.exp(-3 * dt);
     const p = motion.scroll.current;
     const [px, py] = motion.pointer.current;
-    camera.position.y += (5 + p * 9 + py * 1.5 - camera.position.y) * k;
-    camera.position.z += (22 - p * 5 - camera.position.z) * k;
+    // Framed for a sparse graph: an amendment usually touches a handful of
+    // clauses, so a camera placed for a crowd leaves a few specks in the middle
+    // of an empty panel.
+    camera.position.y += (3 + p * 6 + py * 1.2 - camera.position.y) * k;
+    camera.position.z += (15 - p * 3 - camera.position.z) * k;
     camera.position.x += (px * 2.8 - camera.position.x) * k;
     camera.lookAt(0, 0, 0);
     if (groupRef.current) groupRef.current.rotation.y += dt * 0.05;

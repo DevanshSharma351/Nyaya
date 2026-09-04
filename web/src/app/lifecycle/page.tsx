@@ -12,9 +12,10 @@
 
 import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
+import { useTaskReporter } from "@/components/chrome/StatusIsland";
 import { Block, ModuleShell, Rationale } from "@/components/chrome/ModuleShell";
-import { Badge, Empty, Failure } from "@/components/ui";
-import { api, type SDLC } from "@/lib/api";
+import { Badge, Button, Empty, Failure } from "@/components/ui";
+import { api, type SDLC, type SDLCFromBrief } from "@/lib/api";
 
 const LifecycleLayer = dynamic(() => import("@/components/scenes/LifecycleLayer"), {
   ssr: false,
@@ -63,10 +64,51 @@ const PRESETS: Record<string, Record<string, number>> = {
   },
 };
 
+const BRIEF =
+  "We are building remote customer onboarding for a retail bank. Customers " +
+  "will submit identity documents from their phone and complete a liveness " +
+  "check. Everything must be screened against the sanctions list before the " +
+  "account can be used, and we have to keep the evidence for audit. The " +
+  "product team wants to ship changes weekly and the rules keep moving.";
+
 export default function LifecyclePage() {
   const [preset, setPreset] = useState("eKYC onboarding");
   const [result, setResult] = useState<SDLC | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // The brief path. Separate state, because a derived recommendation and a
+  // hand-set one are different claims and should not overwrite each other
+  // silently - the reader needs to know which of the two they are looking at.
+  const [brief, setBrief] = useState(BRIEF);
+  const [derived, setDerived] = useState<SDLCFromBrief | null>(null);
+  const [derivingError, setDerivingError] = useState<string | null>(null);
+  const [deriving, setDeriving] = useState(false);
+  const report = useTaskReporter();
+
+  async function deriveFromBrief() {
+    setDeriving(true);
+    setDerivingError(null);
+    report({
+      state: "running",
+      label: "Reading the brief",
+      detail: "extracting requirements, then ranking",
+    });
+    try {
+      const next = await api.sdlcFromBrief(brief);
+      setDerived(next);
+      report({
+        state: "done",
+        label: next.recommendation.recommended.replace(/_/g, " "),
+        detail: `derived from ${next.requirements_extracted} requirements`,
+      });
+    } catch (e) {
+      setDerivingError((e as Error).message);
+      setDerived(null);
+      report({ state: "failed", label: "Could not read the brief", detail: (e as Error).message });
+    } finally {
+      setDeriving(false);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -98,7 +140,131 @@ export default function LifecyclePage() {
       scene={<LifecycleLayer ranked={result?.ranked ?? null} />}
       sceneCaption="The decision itself. TOPSIS ranks by distance to a synthetic ideal, so it can be drawn without inventing anything: the solid node at the top is that ideal — best on every criterion at once, which no real lifecycle achieves — the faint one at the bottom is its opposite, and each candidate sits on the axis between them at its own closeness coefficient. When two candidates sit at the same height the recommendation is a coin toss, and the picture says so faster than the engine's close-call flag."
     >
-      <Block>
+      {/*
+        The brief comes first, and the presets second, because that is the
+        order of trust. A factor vector set by hand is a conclusion dressed as
+        an input - whoever moves the sliders has already chosen the answer. A
+        vector derived from the requirements actually extracted from a brief is
+        traceable to evidence like everything else here.
+      */}
+      <Block title="Describe the project">
+        <div className="glass-raised p-6 lg:p-8">
+          <textarea
+            value={brief}
+            onChange={(event) => setBrief(event.target.value)}
+            rows={5}
+            aria-label="Project brief"
+            className="body w-full"
+            style={{
+              background: "var(--bg-inset)",
+              border: "1px solid var(--hairline)",
+              borderRadius: 12,
+              padding: "12px 15px",
+              color: "var(--text)",
+              outline: "none",
+              resize: "vertical",
+            }}
+          />
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <Button onClick={deriveFromBrief} disabled={deriving || !brief.trim()}>
+              {deriving ? "Reading the brief…" : "Recommend a lifecycle"}
+            </Button>
+            <span className="caption">
+              extracts requirements first, then derives the factors — 40–100 seconds
+            </span>
+          </div>
+
+          {derivingError && (
+            <div className="mt-4">
+              <Failure message={derivingError} />
+            </div>
+          )}
+
+          {derived && !deriving && (
+            <div className="mt-6" style={{ borderTop: "1px solid var(--hairline)", paddingTop: 20 }}>
+              <div className="mb-4 flex flex-wrap items-center gap-2">
+                <Badge tone="var(--confirmed)">
+                  recommended · {derived.recommendation.recommended.replace(/_/g, " ")}
+                </Badge>
+                <Badge>{derived.requirements_extracted} requirements extracted</Badge>
+                {derived.recommendation.close_call && (
+                  <Badge tone="var(--review)">close call — human decision</Badge>
+                )}
+              </div>
+
+              <div className="mb-5 flex flex-col gap-2.5">
+                {derived.recommendation.ranked.slice(0, 4).map((rank, i) => (
+                  <div key={rank.model}>
+                    <div className="mb-1.5 flex items-baseline justify-between gap-3">
+                      <span className="body" style={{ fontWeight: i === 0 ? 600 : 450 }}>
+                        {rank.model.replace(/_/g, " ")}
+                      </span>
+                      <span className="mono" style={{ color: "var(--text-secondary)" }}>
+                        {rank.percentage}%
+                      </span>
+                    </div>
+                    <div
+                      style={{
+                        height: 6,
+                        borderRadius: 3,
+                        background: "var(--bg-inset)",
+                        overflow: "hidden",
+                      }}
+                    >
+                      <div
+                        style={{
+                          height: "100%",
+                          width: `${rank.percentage}%`,
+                          borderRadius: 3,
+                          background: i === 0 ? "var(--text)" : "var(--hairline-strong)",
+                        }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="headline mb-2">How the factors were derived</div>
+              <ul
+                className="caption"
+                style={{ paddingLeft: 18, margin: 0, lineHeight: 1.7 }}
+              >
+                {derived.observations.map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+
+              {derived.unclear.length > 0 && (
+                <div className="mt-5">
+                  <div className="headline mb-1" style={{ color: "var(--review)" }}>
+                    Questions the brief left open
+                  </div>
+                  <p className="caption mb-2">
+                    These push requirement stability down and change frequency up,
+                    which is part of why the ranking came out as it did. Answering
+                    them on the Requirements module and re-running will move the
+                    recommendation.
+                  </p>
+                  <ul className="caption" style={{ paddingLeft: 18, margin: 0 }}>
+                    {derived.unclear.map((question) => (
+                      <li key={question} style={{ marginBottom: 4 }}>
+                        {question}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </Block>
+
+      <Block title="Or compare against a known profile" delay={0.04}>
+        <p className="caption mb-4" style={{ maxWidth: 640 }}>
+          Four hand-set factor profiles, useful for seeing how the ranking
+          responds to a change in one dimension. Set by hand, so they demonstrate
+          the arithmetic rather than evidencing a recommendation.
+        </p>
         <div className="flex flex-wrap gap-2">
           {Object.keys(PRESETS).map((name) => (
             <button

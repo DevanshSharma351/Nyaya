@@ -14,6 +14,7 @@ import Link from "next/link";
 import dynamic from "next/dynamic";
 import { motion } from "motion/react";
 import { useEffect, useState } from "react";
+import Architecture from "@/components/Architecture";
 import { MODULES } from "@/components/chrome/modules";
 import { api, type Health } from "@/lib/api";
 
@@ -47,7 +48,7 @@ export default function Landing() {
     <>
       <HeroLayer />
 
-      <main className="content-layer pb-36 pl-0 md:pl-[236px]">
+      <main className="content-layer with-rail pb-36">
         <div className="mx-auto max-w-5xl px-6 lg:px-12">
           {/* The hero is deliberately tall. The scene resolves from scattered
               prose into three ordered tiers as the reader scrolls through it,
@@ -134,11 +135,15 @@ export default function Landing() {
             </div>
           </section>
 
-          {/* Three sentences on how to use it. A first-time reader needs to
-              know the order of operations before they need any of the detail,
-              and putting the detail here instead is how landing pages become
-              things nobody finishes. */}
-          <section className="py-20">
+          {/* How it works, before what it contains. A reader who does not know
+              what the machine does cannot judge whether its outputs are worth
+              anything, and every module page assumes they already do. */}
+          <section className="rise py-20" style={{ animationDelay: "0.1s" }}>
+            <Architecture />
+          </section>
+
+          {/* Then the modules themselves, in the order the work happens. */}
+          <section className="py-20" style={{ borderTop: "1px solid var(--hairline)" }}>
             <h2 className="title m-0 max-w-2xl">
               Six modules, in the order the work happens.
             </h2>

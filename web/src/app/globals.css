@@ -229,6 +229,17 @@ body {
 
 .content-layer { position: relative; z-index: var(--z-content); }
 
+/* Content sits clear of the rail, and follows it when it collapses. The width
+   is published by the rail itself as `--rail-width`; the fallback here is what
+   applies before hydration, so the first paint is not misaligned. */
+.with-rail { padding-left: 0; }
+@media (min-width: 768px) {
+  .with-rail {
+    padding-left: var(--rail-width, 236px);
+    transition: padding-left 0.32s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+}
+
 /*
  * Custom pointer.
  *

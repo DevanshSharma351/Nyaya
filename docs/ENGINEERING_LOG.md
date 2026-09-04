@@ -1801,3 +1801,166 @@ in-force sources.
 **State: 209 tests passing against an isolated test database, ruff clean, mypy
 clean across 75 source files; frontend builds with tsc and eslint clean across
 seven routes.**
+
+---
+
+## Session: the modules answer the questions they promised
+
+Six pieces of feedback, and four of them were defects rather than preferences.
+
+### Retrieval was scoring fragments
+
+The reported complaint was that relevance scores were tiny — 0.077 for the
+clause that was in fact correct. Two separate problems sat behind it.
+
+The first was real and substantial. `load_context` ran **after** reranking, so
+the cross-encoder scored every candidate as a bare sub-clause. This was already
+a known failure in this codebase: supplying a clause's parent moved an
+entailment score on one pair from 0.004 to 0.994, because "screening shall be
+performed prior to activation" never says what is being screened against. The
+same omission had been left in the reranking step.
+
+Measured on the 34-query labelled set, attaching context before reranking moves
+**MRR 0.723 → 0.819**, recall@10 0.779 → 0.824, nDCG@10 0.734 → 0.758. The
+failure it fixes is systematic, not noise: without a parent the reranker prefers
+the general parent clause over the specific sub-clause that governs, because the
+parent is the half that reads like a complete statement. Nine of the fourteen
+queries whose top result changed were exactly that shape.
+
+**The eval harness had been measuring the wrong arm.** It reranked without
+loading context, so it reported 0.723 while the shipping path scored 0.855 in a
+standalone check. Its own docstring says the arm under test must be the code
+that ships; it was not. Fixed, and the harness now agrees with the pipeline.
+
+The second problem was presentation. The raw cross-encoder value was printed as
+"relevance 0.077", which reads as "8% relevant" and is not what it means. So the
+score was measured for what it actually predicts: banded by precision on the
+labelled set, ≥0.5 meant 7 in 10 were the governing clause, 0.05–0.5 meant 4 in
+10, below that under 2 in 10. **Rank turned out to be the far stronger signal**
+— the top result is the governing clause 82% of the time and the second only
+29% — so rank leads and the band supports it.
+
+### Results were inert
+
+Six clauses printed with nothing to do with them. They now expand to the full
+clause text fetched from the corpus, carry their rank and what that rank is
+worth, and offer a link that deep-links into the corpus module and a copy of the
+citation key. The corpus module reads `?clause=` so those links land on the
+selected clause, which also means one clause can be sent to a colleague.
+
+### Impact returned 404 because the interface offered impossible work
+
+Nothing was broken in the walk. The source selector listed every document,
+including the two that hold a single version, and change analysis needs two — so
+picking one returned a 404 the reader had done nothing to cause. `/knowledge/documents`
+now reports every version it holds, and the selector offers only sources that
+can actually be compared, with the versions themselves as dropdowns rather than
+free text.
+
+### The lifecycle module never answered its own question
+
+It ranked hand-set factor profiles. Setting those sliders is choosing the answer
+and then computing it — the arithmetic downstream only launders the choice.
+
+`POST /analysis/sdlc/from-brief` now takes a project brief in plain language,
+extracts requirements from it, derives the factor vector from what was actually
+found, and ranks. The derivation moved out of the workflow into `nyaya/mcda/derive.py`
+so the graph and the API share one implementation, and it returns the
+observations behind each number: how much of the brief is regulatory, how much is
+high risk, how many questions it left open. Measured end to end at 45 seconds on
+a five-sentence brief, producing agile/V-model hybrid at 74% with DevSecOps at 70
+— correctly flagged as a close call.
+
+Floors, not defaults, on four factors. A brief that mentions no security
+requirement is far more often one where nobody wrote it down than one where
+security does not matter, and letting a factor fall to zero would let an
+incomplete brief argue for a lighter process.
+
+### Open questions can now be answered
+
+Extraction surfaced them and stopped there. Each is now an input, and answering
+any of them re-runs extraction with the answers **folded into the source text**
+rather than passed as a side channel. That is a provenance property, not a
+convenience: every quantity is checked against the source, so an answer supplied
+out of band would let a real human-supplied number look exactly like an invented
+one. Folded in, an answered question is simply more stated input and the same
+checks apply to it.
+
+### A retry that made a slow call catastrophic
+
+Chasing an extraction that appeared to hang for seven minutes turned up a real
+bug, though not the one being looked for. Extraction is fine — 37 seconds
+measured directly; the requests had been queuing behind each other, since Ollama
+serialises per model.
+
+But the retry predicate covered `httpx.TransportError`, which includes
+`ReadTimeout`. The read timeout is 300 seconds, so a stalled request burned
+fifteen minutes across three attempts before surfacing anything, and the caller
+could not distinguish that from a hang. A timeout also carries information a
+retry destroys — the server is busy or the request is too large — and repeating
+the identical request immediately is the one response guaranteed not to help.
+Connection errors are still retried.
+
+### Scenes: two rebuilt, one reframed
+
+**Coverage** was drawing the result — covered or not — without the thing that
+produces it. A control is a gap for exactly one reason: nothing points at it. It
+is now the bipartite graph it always was, requirements on the left, the control
+pack on the right, an edge where a requirement satisfies a control. The gaps are
+the rings with no thread reaching them. Four threads against a wall of seventeen
+unconnected controls says more than 19% ever did.
+
+**Retrieval** had a translucent floor disc seventeen units across, which in a
+wide short panel filled the frame and produced a pale grey dome with the data
+invisible against it — it read as a rendering failure, which is the worst thing
+an empty state can do. Gone. The corpus is a band of marks and the results are
+columns in rank order, the first dark. The module also runs its first example on
+arrival: retrieval is a vector lookup and a rerank, not a language model, and a
+module that opens empty gives a reader nothing to judge.
+
+**Requirements** now uses the scroll-driven particle assembly from the landing
+page, which is the interaction that worked. The field starts scattered, which is
+what stakeholder language is, and scroll resolves it into one column per
+extracted requirement — column height is acceptance criteria, shade is risk
+level, and the red share is how much of it is defective. Before extraction there
+is nothing to assemble into, so it stays scattered, which is a truthful empty
+state rather than a blank one.
+
+Column heights use a square root. Cross-encoder scores on this corpus are small
+and unevenly spread, and mapping them linearly made every column the same stub.
+
+### The architecture, drawn
+
+The honest shape of this system is not a swarm of agents conferring. It is a
+fixed graph with language models at four points, non-model machinery checking
+every one of them, and a human gate after each stage. The landing page now says
+so in three lanes — proposes, verifies, decides — across the four stages. Read
+down a column and you have the answer to "why should I believe this?".
+
+Drawing it as a mesh of chatting agents would look more impressive and would
+misrepresent it, and the difference is the entire argument: the reason to trust
+an output here is precisely that a model did not get the last word on it.
+
+Laid out with CSS grid rather than SVG so the text is real text. The first
+attempt used `auto-fit, minmax(180px, 1fr)` for a lane label plus four stages;
+with five items that wraps, and the fourth stage dropped onto a second row under
+the lane label, reading as though it belonged to a different lane. An explicit
+five-column template cannot do that, and the narrow case is a genuinely
+different arrangement rather than a squeezed one.
+
+### Also
+
+The rail collapses, and remembers it. The preference is read through
+`useSyncExternalStore` rather than hydrated from an effect — the effect version
+is a cascading render and samples once at mount, so a second tab toggling the
+rail would never be noticed. The width is published as a custom property so
+content follows without every page subscribing to navigation state.
+
+The landing scene fades out once scrolled past. It is fixed, so without that the
+particle field followed the reader down the page and sat behind the architecture
+diagram — five hundred moving dots behind body text, which is the exact
+ornament-over-content failure this interface is meant to avoid.
+
+**State: 219 tests passing against an isolated database, ruff and mypy clean
+across 76 source files; frontend builds with tsc and eslint clean across seven
+routes.**
