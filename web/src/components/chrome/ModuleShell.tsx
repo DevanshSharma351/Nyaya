@@ -10,10 +10,24 @@
  */
 
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { ChevronRight } from "lucide-react";
 import { motion, useScroll, useSpring } from "motion/react";
 import type { ReactNode } from "react";
 import { neighbours } from "./modules";
+
+/**
+ * The ambient field, on every module page.
+ *
+ * Mounted here rather than in the root layout so the landing page is excluded:
+ * it assembles its own copy of this lattice as its hero, and running both would
+ * put two fields on top of each other. Loaded lazily and after the content,
+ * because it is decoration and must never be on the critical path for
+ * something a reader is trying to act on.
+ */
+const AmbientLayer = dynamic(() => import("@/components/scenes/AmbientLayer"), {
+  ssr: false,
+});
 
 export function ModuleShell({
   eyebrow,
@@ -50,6 +64,7 @@ export function ModuleShell({
 
   return (
     <>
+      <AmbientLayer />
 
       {/* Reading position. A hairline rather than a bar: it answers "how much
           is left" without asking to be looked at. */}
