@@ -32,3 +32,6 @@ eval_runs/
 
 # os
 .DS_Store
+
+# agent tooling, generated locally
+CLAUDE.md

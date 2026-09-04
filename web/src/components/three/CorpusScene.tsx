@@ -1,41 +1,52 @@
-/* eslint-disable react-hooks/immutability -- 
+/* eslint-disable react-hooks/immutability --
  * A WebGL render loop is imperative by construction. Every frame mutates
  * simulation bodies and writes directly to Three.js objects through refs, which
  * is exactly what these rules exist to prevent in *rendering* code and exactly
- * what animation code must do: routing 137 positions per frame through React
+ * what animation code must do: routing 140 positions per frame through React
  * state would re-render the tree sixty times a second to no purpose.
- *
- * The exception is deliberately file-scoped. Nothing here participates in
- * React's rendering model beyond mounting the canvas, and no other component in
- * this codebase carries it.
  */
 "use client";
 
 /**
- * The regulatory corpus as a 3D force-directed graph.
+ * The regulatory corpus as a force-directed graph.
  *
- * This is 3D because the data is: clauses nest inside clauses inside documents,
- * and a hierarchy of that shape is genuinely hard to read flattened. The
- * alternative - a decorative 3D scene next to a 2D list - would be ornament,
- * which a compliance tool cannot afford.
+ * This is 3D because the data is: clauses nest inside clauses inside
+ * documents, and a hierarchy of that shape is genuinely hard to read
+ * flattened. The alternative - a decorative scene beside a 2D list - would be
+ * ornament, which a compliance tool cannot afford.
  *
- * Layout runs on a simple force simulation in a `useFrame` loop rather than a
- * library, so the physics can be tuned to keep documents as stable anchors while
- * clauses settle around them. A layout that drifts continuously is pretty and
- * unusable; this one converges and then holds.
+ * Layout is a hand-written force simulation rather than a library, so
+ * documents can be pinned as stable anchors while clauses settle around them.
+ * A layout that drifts forever is pretty and unusable; this one converges and
+ * then holds, so a reader's spatial memory of the corpus is worth something
+ * across reloads.
+ *
+ * Scroll drives the camera *through* the graph: at the top the whole corpus is
+ * in frame, and by the foot of the page the camera is inside the cloud among
+ * individual clauses. That is the module's argument made physical - the page
+ * moves from the corpus in aggregate to a single clause you can cite.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { useEffect, useMemo, useRef } from "react";
+import { useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
 import type { Graph, GraphNode } from "@/lib/api";
+import { useStageMotion } from "./stage";
 
-const KIND_COLOR: Record<GraphNode["kind"], string> = {
-  document: "#0a84ff",
-  clause: "#bf5af2",
-  control: "#30d158",
-  requirement: "#ff9f0a",
+/*
+ * Neutral by kind, separated by value rather than by hue.
+ *
+ * Four hues for four node kinds looked like a legend and behaved like
+ * confetti: hue is the strongest signal in a scene and spending it on a
+ * category the reader can also get from size and position is waste. Documents
+ * are the darkest because they anchor the layout; clauses recede.
+ */
+export const KIND_COLOR: Record<GraphNode["kind"], string> = {
+  document: "#18181b",
+  clause: "#a8a8b0",
+  control: "#52525b",
+  requirement: "#71717a",
 };
 
 type Body = {
@@ -50,9 +61,6 @@ function buildBodies(graph: Graph): Map<string, Body> {
   const documents = graph.nodes.filter((n) => n.kind === "document");
 
   graph.nodes.forEach((node, index) => {
-    // Documents are placed deterministically on a ring and pinned. Anchoring
-    // them keeps the layout legible across reloads: the same corpus produces
-    // the same arrangement, so a reader's spatial memory is worth something.
     if (node.kind === "document") {
       const i = documents.indexOf(node);
       const angle = (i / Math.max(documents.length, 1)) * Math.PI * 2;
@@ -64,16 +72,15 @@ function buildBodies(graph: Graph): Map<string, Body> {
       });
       return;
     }
+    // A golden-angle spiral for the initial scatter. Random placement gives a
+    // different layout on every reload even with identical data, which makes
+    // the picture useless as a thing to remember.
     const golden = Math.PI * (3 - Math.sqrt(5));
     const t = index * golden;
     const r = 4 + (index % 7) * 0.8;
     bodies.set(node.id, {
       node,
-      position: new THREE.Vector3(
-        Math.cos(t) * r,
-        (Math.random() - 0.5) * 6,
-        Math.sin(t) * r,
-      ),
+      position: new THREE.Vector3(Math.cos(t) * r, ((index % 11) - 5) * 0.6, Math.sin(t) * r),
       velocity: new THREE.Vector3(),
       anchored: false,
     });
@@ -81,23 +88,36 @@ function buildBodies(graph: Graph): Map<string, Body> {
   return bodies;
 }
 
-function Scene({
+export default function CorpusScene({
   graph,
   onHover,
+  focus,
+  interactive = false,
 }: {
   graph: Graph;
-  onHover: (node: GraphNode | null) => void;
+  onHover?: (node: GraphNode | null) => void;
+  /** Citation key to pull forward, when the reader has selected a clause. */
+  focus?: string | null;
+  /**
+   * Hands the camera to the reader.
+   *
+   * Orbit controls and a scroll-driven camera cannot both own the camera - each
+   * would overwrite the other every frame, and the result is a scene that
+   * fights the mouse. So this is a choice, not a combination: the corpus module
+   * is for exploring and gives the camera away; everywhere else scroll keeps it.
+   */
+  interactive?: boolean;
 }) {
   const bodies = useMemo(() => buildBodies(graph), [graph]);
   const linesRef = useRef<THREE.LineSegments>(null);
   const groupRef = useRef<THREE.Group>(null);
   const { camera } = useThree();
+  const motion = useStageMotion();
   const settled = useRef(0);
 
   const nodes = useMemo(() => [...bodies.values()], [bodies]);
   const edges = useMemo(
-    () =>
-      graph.edges.filter((e) => bodies.has(e.source) && bodies.has(e.target)),
+    () => graph.edges.filter((e) => bodies.has(e.source) && bodies.has(e.target)),
     [graph.edges, bodies],
   );
 
@@ -108,8 +128,17 @@ function Scene({
   const nodeRefs = useRef<(THREE.Mesh | null)[]>([]);
 
   useEffect(() => {
-    camera.position.set(0, 3, 19);
+    camera.position.set(0, 2, 17);
   }, [camera]);
+
+  const lineGeometry = useMemo(() => {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute(
+      "position",
+      new THREE.BufferAttribute(new Float32Array(Math.max(edges.length, 1) * 6), 3),
+    );
+    return geometry;
+  }, [edges.length]);
 
   useFrame((_, delta) => {
     const dt = Math.min(delta, 0.05);
@@ -169,12 +198,18 @@ function Scene({
 
     nodes.forEach((body, i) => {
       const mesh = nodeRefs.current[i];
-      if (mesh) mesh.position.copy(body.position);
+      if (!mesh) return;
+      mesh.position.copy(body.position);
+      // A selected clause grows and the rest recede, so "which one is that"
+      // has an answer in the scene and not only in the list beside it.
+      const selected = focus != null && body.node.label === focus;
+      const base = 0.2 + body.node.weight * 0.13;
+      const target = selected ? base * 2.4 : focus ? base * 0.75 : base;
+      mesh.scale.lerp(new THREE.Vector3(target, target, target), 1 - Math.exp(-8 * dt));
     });
 
     if (linesRef.current) {
-      const positions = linesRef.current.geometry.attributes.position
-        .array as Float32Array;
+      const positions = linesRef.current.geometry.attributes.position.array as Float32Array;
       edges.forEach((edge, i) => {
         const a = bodies.get(edge.source)!.position;
         const b = bodies.get(edge.target)!.position;
@@ -183,30 +218,38 @@ function Scene({
       linesRef.current.geometry.attributes.position.needsUpdate = true;
     }
 
-    // A slow rotation reads as alive without demanding attention.
+    // Scroll flies the camera in from outside the cloud to inside it, and the
+    // pointer parallaxes it slightly - enough to read as a window onto a solid
+    // object rather than a picture of one. Skipped entirely when the reader
+    // has the camera.
+    if (!interactive) {
+      const p = motion.scroll.current;
+      const [px, py] = motion.pointer.current;
+      const k = 1 - Math.exp(-4 * dt);
+      camera.position.z += (26 - p * 19 - px * 1.2 - camera.position.z) * k;
+      camera.position.y += (3 - p * 2 + py * 1.6 - camera.position.y) * k;
+      camera.lookAt(0, 0, 0);
+    }
+
     if (groupRef.current) {
       groupRef.current.rotation.y += dt * 0.045;
     }
   });
 
-  const lineGeometry = useMemo(() => {
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute(
-      "position",
-      new THREE.BufferAttribute(new Float32Array(Math.max(edges.length, 1) * 6), 3),
-    );
-    return geometry;
-  }, [edges.length]);
-
   return (
-    <group ref={groupRef}>
-      <lineSegments ref={linesRef} geometry={lineGeometry}>
-        <lineBasicMaterial
-          color="#8f8fb4"
-          transparent
-          opacity={0.4}
-          depthWrite={false}
+    <>
+      {interactive && (
+        <OrbitControls
+          enablePan={false}
+          enableDamping
+          dampingFactor={0.06}
+          minDistance={7}
+          maxDistance={34}
         />
+      )}
+      <group ref={groupRef}>
+      <lineSegments ref={linesRef} geometry={lineGeometry}>
+        <lineBasicMaterial color="#d4d4d8" transparent opacity={0.95} depthWrite={false} />
       </lineSegments>
 
       {nodes.map((body, i) => (
@@ -219,61 +262,21 @@ function Scene({
           scale={0.2 + body.node.weight * 0.13}
           onPointerOver={(event) => {
             event.stopPropagation();
-            onHover(body.node);
+            onHover?.(body.node);
           }}
-          onPointerOut={() => onHover(null)}
+          onPointerOut={() => onHover?.(null)}
         >
           <icosahedronGeometry args={[1, 2]} />
           <meshPhysicalMaterial
             color={KIND_COLOR[body.node.kind]}
-            roughness={0.22}
-            metalness={0.15}
-            clearcoat={0.9}
-            clearcoatRoughness={0.18}
-            emissive={KIND_COLOR[body.node.kind]}
-            emissiveIntensity={0.28}
+            roughness={0.42}
+            metalness={0.05}
+            clearcoat={0.6}
+            clearcoatRoughness={0.3}
           />
         </mesh>
       ))}
-    </group>
-  );
-}
-
-export default function KnowledgeGraph({ graph }: { graph: Graph }) {
-  const [hovered, setHovered] = useState<GraphNode | null>(null);
-
-  return (
-    <div className="relative h-full w-full">
-      <Canvas
-        dpr={[1, 2]}
-        camera={{ fov: 52, near: 0.1, far: 200 }}
-        gl={{ antialias: true, alpha: true }}
-      >
-        <ambientLight intensity={0.45} />
-        <directionalLight position={[8, 12, 8]} intensity={1.5} />
-        <directionalLight position={[-8, -4, -6]} intensity={0.45} color="#bf5af2" />
-        <Scene graph={graph} onHover={setHovered} />
-        <OrbitControls
-          enablePan={false}
-          enableDamping
-          dampingFactor={0.06}
-          minDistance={9}
-          maxDistance={38}
-          autoRotate={false}
-        />
-      </Canvas>
-
-      {hovered && (
-        <div className="glass-raised specular pointer-events-none absolute bottom-5 left-5 max-w-sm p-4">
-          <div className="mono mb-1" style={{ color: KIND_COLOR[hovered.kind] }}>
-            {hovered.label}
-          </div>
-          <p className="body m-0" style={{ color: "var(--text-secondary)" }}>
-            {hovered.detail.slice(0, 190)}
-            {hovered.detail.length > 190 ? "…" : ""}
-          </p>
-        </div>
-      )}
-    </div>
+      </group>
+    </>
   );
 }

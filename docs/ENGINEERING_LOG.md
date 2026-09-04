@@ -1592,3 +1592,212 @@ second to no purpose. No other component carries the exception.
 
 **State: 208 tests passing, ruff clean, mypy clean across 75 source files;
 frontend builds clean with tsc and eslint clean.**
+
+---
+
+## Session: the frontend becomes an application, and the palette gets cut back
+
+Two instructions drove this, and the second contradicted part of the first.
+
+The first: divide the interface into modules rather than one page, put 3D
+throughout rather than only in a hero, drive it from scroll, add a responsive
+cursor, and cut clutter. The second, arriving mid-build: *remove these
+unnecessary colours, looks bad, find a better cursor, be simplistic*, alongside
+a reference screenshot of a near-monochrome light interface and the source of a
+Dynamic Island component to use.
+
+### One page became seven routes
+
+`page.tsx` had stacked five panels on a single scroll. It is now an App Router
+application: a landing page and six modules — Corpus, Retrieval, Requirements,
+Coverage, Lifecycle, Impact — each with its own route, its own scene, and one
+question it answers, stated in the navigation next to its name.
+
+The rail and the pointer live in the root layout, so navigation preserves them.
+That is what lets the rail's selection indicator travel from the module you left
+to the one you arrived at: a `layoutId` on a single element rather than two
+highlights cross-fading. A shared element tells you where you came from as well
+as where you are.
+
+`modules.ts` is a plain data file that the rail, the landing grid and the
+previous/next links all read. Duplicating that list is how navigation and
+content drift apart.
+
+### The palette was doing too much
+
+The dark theme carried five accents at once — blue, purple, green, amber, red.
+Cut to a neutral ground with exactly three saturated colours left, and all three
+mean *act on this*: a gap, a warning, a confirmation. Interactive is near-black
+rather than a hue, because weight and contrast already do that job. Citation
+keys lost their purple: a citation key is an identifier, not a category needing
+its own colour.
+
+This was the right call for a reason beyond taste. When everything is coloured,
+colour stops carrying information, and a compliance finding printed in the same
+palette as a decorative gradient reads as decoration.
+
+The same logic reshaped every scene. Relevance is now drawn as darkness on a
+continuous ramp rather than three colour bands, which invented three kinds of
+result where there is only one kind with a score. Coverage spends colour only on
+gaps — a covered control is the absence of a problem, and the absence of a
+problem does not need a colour. Risk levels are shades with one exception:
+critical, the only level at which a reader is being asked to stop.
+
+### Two bugs the repaint exposed
+
+`Badge` and `Failure` built their tinted borders as `` `${tone}44` `` where
+`tone` was a CSS custom property. `var(--gap)44` is not a colour, so the browser
+dropped the declaration and **those borders and backgrounds had never rendered
+at all**. It looked deliberate, because the text colour on its own still worked.
+Replaced with `color-mix`.
+
+The API's CORS origins were hardcoded to `:3000`. A production build served on
+any other port could not reach its own backend — which is exactly how it failed
+the first time one was served. Now configurable, still listed rather than
+wildcarded, because this API returns compliance findings.
+
+### Scenes: from backdrop to figure
+
+The first attempt put each module's scene full-bleed behind the content. On a
+white ground that cannot be won: dark enough to see collides with the text,
+washed out enough to protect the text leaves nothing to look at. Both were
+tried, including a graduated white veil.
+
+Each scene now has a bounded panel of its own below the module header, with a
+border, its own ground and a caption saying what it shows. The conflict
+disappears, and the scene stops being decoration behind content it was competing
+with — it becomes a figure the reader can look at directly. Only the landing
+page keeps a full-bleed scene, where the copy takes one half of the frame and
+the particles the other.
+
+### The rendering environment was the thing under test, again
+
+Verifying 3D cost most of this session. The in-app browser pane reports
+`document.hidden` and never runs `requestAnimationFrame`, so nothing draws in
+it. Headless Chrome with `--virtual-time-budget` races hydration and the dynamic
+import of the 3D bundle: some runs captured three rendered frames, some captured
+none, and the difference looked exactly like a code change working or not
+working. Screenshots are now taken over the DevTools Protocol with a real wait,
+which is deterministic.
+
+Instrumenting rather than guessing found three real defects that a screenshot
+alone would have kept hidden:
+
+- **The canvas was stuck at 300×150.** An absolutely positioned wrapper inside
+  an `overflow: hidden` panel left React Three Fiber's own measurement at zero,
+  so it never sized the drawing buffer. A plain full-size block measures
+  reliably.
+- **My visibility gate broke the thing it was optimising.** `frameloop="never"`
+  while `document.hidden` meant a scene mounting in a background tab never
+  rendered, never took its size, and stayed blank. It was also solving a problem
+  the platform already solves — browsers suspend rAF in background tabs on their
+  own. Removed.
+- **Entrance animations gated content visibility.** Motion components animating
+  from `opacity: 0` leave content invisible whenever the animation does not run,
+  and motion suspends while the document reports itself hidden. A fully
+  populated DOM sat at zero opacity. Headers, blocks and result lists are now
+  revealed by CSS keyframes, which run without hydration and end in the final
+  state regardless of when they ran. Scene entrances grow from a third of full
+  size rather than from nothing, for the same reason.
+
+The `Ring` and the lifecycle bars were converted from animated sweeps to drawn
+values in the same pass. They had the same failure mode, and they also
+contradicted the rule the rest of the interface follows: data does not animate.
+A reader should not have to wait to learn a coverage ratio they are acting on.
+
+### The Dynamic Island
+
+Built the component the reference demo was written against, and put it to a real
+use: extraction runs on a local model for forty to a hundred seconds, and a
+still page is indistinguishable from a broken one. A single surface that changes
+shape is easier to follow than a toast stack, because there is only ever one of
+it.
+
+It is transient. The first version idled with corpus size and model
+reachability in it, which parked a pill over the middle of every page — on the
+impact module it covered a form field. Persistent state moved to the rail, which
+is always in the same place and never on top of anything. The island is for
+things that are happening now and then stop.
+
+### The pointer got quieter
+
+The first custom cursor had a coloured ring, a blend mode and a text label, and
+was the loudest thing on screen. A pointer that announces itself competes with
+what it is pointing at. Now a small neutral disc trailing slightly behind the
+true position, which is what gives it apparent mass.
+
+Two fixes worth recording. It painted at the viewport centre before the pointer
+had ever moved, which read as a rendering artefact — it now renders nothing
+until it knows where it is. And the media queries moved to
+`useSyncExternalStore`: reading `matchMedia` in an effect samples once at mount
+and never notices a change, so someone turning on Reduce Motion kept whatever
+was true when the page loaded.
+
+### Test isolation — fixtures were leaking into the corpus
+
+The corpus module showed twenty `TEST-MD-*` documents beside the three real
+sources. The suite ran against the development database, and several fixtures
+commit — an amendment scenario is only meaningful if both versions persist — so
+the session fixture's rollback did not undo them. Forty-two documents and
+fifty-five projects had accumulated, and the API served them.
+
+**The tests passed throughout.** This was only ever visible as junk in a
+listing.
+
+Tests now run against a dedicated `nyaya_test` database, created with its
+extensions on first use. That immediately exposed a second problem: the
+retrieval tests guarded on "does the database contain any clauses at all" and
+skipped otherwise. Against a shared database that worked by accident. Against a
+clean one it passed on fifty-six rows of unrelated fixture data and then failed
+looking for `RBI-MD-KYC:16(b)`. The corpus is now ingested by a session fixture,
+so the suite is self-contained and the dependency is explicit rather than a line
+in a README.
+
+### Impact reported the same work item eleven times
+
+With the demo data seeded, the impact walk reported eleven affected
+requirements — all the same requirement and clause. Two separate causes, both
+real:
+
+- The walk emitted one entry per evidence row. A requirement carries several
+  edges to the same clause, one per relation and one per extraction run that
+  re-derived it. Now deduplicated on the pair, which is the actual unit of
+  review work, and ordered orphaned-first so the queue is stable between runs.
+- The rest were distinct requirement rows with the same ref, leaked from test
+  runs — the isolation problem above, seen from the other end.
+
+A regression test covers the first. The count is what a reviewer plans against,
+so an inflated count is not a cosmetic problem.
+
+### Seeded data, and why it is honest
+
+`/impact` needs two versions of a source and some requirements to break.
+`make seed` now ingests the corpus, then an amendment as version 2, then a
+baseline project.
+
+The amendment is expressed as the edits themselves rather than as a second copy
+of the file — a duplicated corpus drifts the first time either is touched, and
+the amendment *is* the diff. Its three edits exercise all three cases the walk
+distinguishes: a clause amended, a quantity changed inside a clause, and a
+clause removed outright.
+
+Every seeded requirement cites a clause that is really in the corpus and quotes
+text that really appears in it, resolved against the version in force when the
+baseline was approved. Seeding a demo with invented citations would make the one
+module whose subject is citation integrity the only one running on citations
+nobody checked. Two of the five cite clauses the amendment leaves alone: if they
+ever appear in an impact report, the walk is over-reporting.
+
+The result is the report it should be — one orphaned, two stale, and silence
+about the two untouched.
+
+### Also corrected
+
+`corpus_clauses` in the health response counted every clause row including
+superseded versions. Ingesting the amendment made it jump from 104 to 160 while
+the corpus a reader can actually cite had not grown at all. Now scoped to
+in-force sources.
+
+**State: 209 tests passing against an isolated test database, ruff clean, mypy
+clean across 75 source files; frontend builds with tsc and eslint clean across
+seven routes.**

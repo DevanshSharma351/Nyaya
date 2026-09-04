@@ -3,50 +3,90 @@
 /*
  * Design language.
  *
- * Apple's depth comes from *material*, not ornament: layered translucency,
- * light that falls consistently, and motion with real physics. The rules below
- * follow that rather than imitating its surface.
+ * Simplicity first. The earlier version of this interface carried five accent
+ * colours at once - blue, purple, green, amber, red - and the effect was noise:
+ * when everything is coloured, colour stops meaning anything, and a compliance
+ * finding printed in the same palette as a decorative gradient does not read as
+ * a finding.
  *
- * One deliberate constraint. This is a compliance tool, and decoration on a
- * data surface costs credibility - a finding that looks like a marketing
- * animation invites the reader to discount it. So depth and motion live in the
- * ambient layers (background, navigation, the graph), while anything carrying a
- * citation, a score or a gap stays flat, still and legible.
+ * So the surface is neutral. White ground, near-black ink, one hairline. The
+ * only saturated colour left in the system is state that a reader has to act
+ * on - a gap, a warning, a confirmation - and those three are muted rather than
+ * neon, because they need to be identifiable, not loud.
+ *
+ * The depth that Apple gets from material and light is kept, but on a light
+ * ground it comes from shadow and edge rather than translucency and glow.
+ *
+ * Two rules run through everything:
+ *
+ * 1. Ambient layers may move; data layers may not. A finding that animates like
+ *    a marketing page invites the reader to discount it, so motion lives in the
+ *    scene and the chrome, never in a number.
+ *
+ * 2. One thing per screen. The application is divided into modules, each with
+ *    its own route, its own scene and one question it answers.
  */
 
 :root {
-  --ink: #0a0a0f;
-  --ink-2: #12121a;
+  /* Ground and ink. */
+  --bg: #ffffff;
+  --bg-subtle: #fafafa;
+  --bg-inset: #f4f4f5;
 
-  --text: #f5f5f7;
-  --text-secondary: #a1a1aa;
-  --text-tertiary: #6b6b76;
+  --text: #09090b;
+  --text-secondary: #71717a;
+  --text-tertiary: #a1a1aa;
 
-  /* One accent per meaning, never for decoration. */
-  --accent: #0a84ff;      /* interactive */
-  --confirmed: #30d158;   /* verified by both signals */
-  --review: #ff9f0a;      /* needs a human */
-  --gap: #ff453a;         /* blocking gap or conflict */
-  --clause: #bf5af2;      /* regulatory source */
+  /* Interactive is near-black, not a hue. A blue button on a neutral page is
+     one more colour doing a job that weight and contrast already do. */
+  --accent: #09090b;
+  --accent-ink: #ffffff;
 
-  --glass: rgba(255, 255, 255, 0.045);
-  --glass-strong: rgba(255, 255, 255, 0.075);
-  --hairline: rgba(255, 255, 255, 0.09);
+  /* State. The only saturated colour in the system, and only three of them. */
+  --confirmed: #067647;
+  --review: #b54708;
+  --gap: #b42318;
+
+  /* Regulatory source. Neutral: a citation key is an identifier, not a
+     category needing its own hue. */
+  --clause: #52525b;
+
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --hairline: #e4e4e7;
+  --hairline-strong: #d4d4d8;
+
+  --shadow-sm: 0 1px 2px rgba(9, 9, 11, 0.05);
+  --shadow-md: 0 1px 3px rgba(9, 9, 11, 0.06), 0 8px 24px -12px rgba(9, 9, 11, 0.12);
+  --shadow-lg: 0 1px 3px rgba(9, 9, 11, 0.05), 0 20px 48px -20px rgba(9, 9, 11, 0.18);
 
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  --rail: 236px;
+
+  /* Layering. Written once, here, because a fixed WebGL canvas behind
+     scrolling content is exactly the situation where ad-hoc z-index guesses
+     produce a scene that paints over its own interface. */
+  --z-scene: 0;
+  --z-content: 1;
+  --z-chrome: 40;
+  --z-island: 60;
+  --z-cursor: 100;
 }
 
 * { box-sizing: border-box; }
 
 html {
-  background: var(--ink);
+  background: var(--bg);
+  scroll-behavior: smooth;
+  color-scheme: light;
 }
 
 body {
   margin: 0;
   padding: 0;
-  background: transparent;
+  background: var(--bg);
   color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
     "Inter", "Segoe UI", system-ui, sans-serif;
@@ -58,147 +98,159 @@ body {
 /* Optical sizing: display text tightens, body text does not. Apple's type
    ramp does this and it is most of why their headings feel settled. */
 .display {
-  font-size: clamp(2.75rem, 7vw, 5.25rem);
-  line-height: 1.02;
+  font-size: clamp(2.25rem, 5.4vw, 3.75rem);
+  line-height: 1.04;
   letter-spacing: -0.035em;
   font-weight: 600;
 }
-.title { font-size: clamp(1.5rem, 3vw, 2.25rem); line-height: 1.12; letter-spacing: -0.022em; font-weight: 600; }
-.headline { font-size: 1.0625rem; letter-spacing: -0.012em; font-weight: 600; }
-.body { font-size: 0.9375rem; line-height: 1.55; letter-spacing: -0.004em; }
-.caption { font-size: 0.8125rem; letter-spacing: 0.005em; color: var(--text-secondary); }
-.mono { font-family: "SF Mono", ui-monospace, "JetBrains Mono", monospace; font-size: 0.8125rem; letter-spacing: -0.01em; }
+.title { font-size: clamp(1.375rem, 2.6vw, 1.875rem); line-height: 1.15; letter-spacing: -0.024em; font-weight: 600; }
+.headline { font-size: 1rem; letter-spacing: -0.011em; font-weight: 600; }
+.body { font-size: 0.9375rem; line-height: 1.6; letter-spacing: -0.004em; }
+.caption { font-size: 0.8125rem; line-height: 1.5; letter-spacing: 0; color: var(--text-secondary); }
+.mono {
+  font-family: "SF Mono", ui-monospace, "JetBrains Mono", monospace;
+  font-size: 0.8125rem;
+  letter-spacing: -0.01em;
+}
+.eyebrow {
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--text-secondary);
+}
 
-/* Material: a surface that admits some of what is behind it. */
+/* Surfaces. On a light ground, depth is an edge and a shadow - not a blur.
+   The class names are unchanged from the dark version on purpose: they mean
+   "card" and "raised card", and that meaning survived the repaint. */
 .glass {
-  background: var(--glass);
-  backdrop-filter: blur(28px) saturate(180%);
-  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  background: var(--surface);
   border: 1px solid var(--hairline);
-  border-radius: 20px;
+  border-radius: 14px;
 }
 .glass-raised {
-  background: var(--glass-strong);
-  backdrop-filter: blur(36px) saturate(190%);
-  -webkit-backdrop-filter: blur(36px) saturate(190%);
-  border: 1px solid rgba(255, 255, 255, 0.13);
-  border-radius: 22px;
-  box-shadow:
-    0 1px 0 0 rgba(255, 255, 255, 0.07) inset,
-    0 24px 60px -20px rgba(0, 0, 0, 0.75);
+  background: var(--surface-raised);
+  border: 1px solid var(--hairline);
+  border-radius: 16px;
+  box-shadow: var(--shadow-md);
 }
 
-/* Specular edge: a single light source, top-left, on every raised surface.
-   Consistency here is what makes layered panels read as one material. */
-.specular { position: relative; overflow: hidden; }
-.specular::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: linear-gradient(
-    145deg,
-    rgba(255, 255, 255, 0.11) 0%,
-    rgba(255, 255, 255, 0.02) 26%,
-    transparent 55%
-  );
-  pointer-events: none;
-}
+/* Kept as a no-op so the dark theme's specular highlight can return with the
+   tokens if this is ever inverted. On white there is nothing to catch. */
+.specular { position: relative; }
 
 .hairline { border-color: var(--hairline); }
+
+.inset {
+  background: var(--bg-inset);
+  border: 1px solid transparent;
+  border-radius: 12px;
+}
 
 /* Motion. Springs, not linear fades - a panel that decelerates reads as having
    mass, which is what makes an interface feel physical rather than animated. */
 @keyframes rise {
-  from { opacity: 0; transform: translate3d(0, 22px, 0) scale(0.985); }
+  from { opacity: 0; transform: translate3d(0, 14px, 0); }
   to   { opacity: 1; transform: none; }
 }
-.rise { animation: rise 0.75s var(--ease-out) both; }
+.rise { animation: rise 0.6s var(--ease-out) both; }
 
-@keyframes drift {
-  0%, 100% { transform: translate3d(0, 0, 0); }
-  50%      { transform: translate3d(0, -14px, 0); }
+@keyframes shimmer {
+  from { background-position: -180% 0; }
+  to   { background-position: 180% 0; }
 }
-.drift { animation: drift 9s ease-in-out infinite; }
-
-@keyframes sheen {
-  from { background-position: -220% 0; }
-  to   { background-position: 220% 0; }
-}
+/* Indeterminate progress. Used only while a local model is running, which is
+   long enough that stillness reads as breakage. */
 .sheen {
   background: linear-gradient(
     100deg,
-    transparent 38%,
-    rgba(255, 255, 255, 0.5) 50%,
-    transparent 62%
+    var(--bg-inset) 38%,
+    #e4e4e7 50%,
+    var(--bg-inset) 62%
   );
-  background-size: 220% 100%;
-  animation: sheen 2.6s ease-in-out infinite;
+  background-size: 180% 100%;
+  animation: shimmer 1.8s ease-in-out infinite;
 }
 
-/* Ambient light behind the page. Two slow-moving fields, never over content. */
-.aurora {
-  position: fixed;
-  inset: -30%;
-  z-index: 0;
-  filter: blur(120px);
-  opacity: 0.55;
-  pointer-events: none;
-}
-.aurora::before, .aurora::after {
-  content: "";
-  position: absolute;
-  width: 55vw;
-  height: 55vw;
-  border-radius: 50%;
-}
-.aurora::before {
-  background: radial-gradient(circle, rgba(10, 132, 255, 0.5), transparent 66%);
-  top: 4%; left: 6%;
-  animation: drift 22s ease-in-out infinite;
-}
-.aurora::after {
-  background: radial-gradient(circle, rgba(191, 90, 242, 0.4), transparent 66%);
-  bottom: 2%; right: 4%;
-  animation: drift 27s ease-in-out infinite reverse;
-}
-
-/* Grain. Breaks the banding that large blurred gradients produce on wide
-   gamut displays, which is what otherwise makes them look cheap. */
-.grain {
-  position: fixed;
-  inset: 0;
-  z-index: 1;
-  opacity: 0.026;
-  pointer-events: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-}
-
-::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 5px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+::-webkit-scrollbar-thumb { background: #e4e4e7; border-radius: 5px; }
+::-webkit-scrollbar-thumb:hover { background: #d4d4d8; }
 
-::selection { background: rgba(10, 132, 255, 0.32); }
+::selection { background: rgba(9, 9, 11, 0.1); }
 
 *:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 3px;
-  border-radius: 8px;
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/*
+ * Two ways to mount a scene, and the difference matters.
+ *
+ * `scene-layer` is a fixed full-bleed canvas behind everything. It is used on
+ * the landing page, where the copy occupies one half of the frame and the scene
+ * the other, so the two never overlap.
+ *
+ * `scene-panel` is a bounded viewport inside the page. Every module uses this,
+ * and the reason is a failure worth recording: a full-bleed scene behind a
+ * centred column of dark text on a white ground cannot be won. Make the scene
+ * dark enough to see and it collides with the text; wash it out enough to
+ * protect the text and there is nothing left to look at. Both were tried. A
+ * bounded panel dissolves the conflict - the scene gets its own frame, its own
+ * contrast range and a caption, and stops being decoration behind content it
+ * was competing with.
+ */
+.scene-layer {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-scene);
+  pointer-events: none;
+}
+.scene-layer canvas { pointer-events: auto; }
+
+.scene-panel {
+  position: relative;
+  height: clamp(280px, 42vh, 420px);
+  border: 1px solid var(--hairline);
+  border-radius: 16px;
+  overflow: hidden;
+  background:
+    radial-gradient(120% 90% at 50% 0%, #ffffff 0%, var(--bg-subtle) 70%, #f1f1f3 100%);
+}
+/* Sized by the flow, not by absolute positioning. React Three Fiber measures
+   its own container to size the drawing buffer, and an absolutely positioned
+   wrapper inside an overflow-hidden panel left that measurement at zero - the
+   canvas stayed at its default 300x150 and the scene never appeared. A plain
+   full-size block measures reliably. */
+.scene-panel-canvas {
+  width: 100%;
+  height: 100%;
+}
+
+.content-layer { position: relative; z-index: var(--z-content); }
+
+/*
+ * Custom pointer.
+ *
+ * Hiding the system cursor is a real accessibility risk: if the replacement
+ * fails to render, the pointer is simply gone. So it is opt-in from script,
+ * only after the custom cursor has mounted and positioned itself, and only on
+ * devices with a precise pointer.
+ */
+@media (pointer: fine) {
+  body.has-custom-cursor,
+  body.has-custom-cursor * { cursor: none !important; }
 }
 
 /* Respect the system setting. Ambient motion is the first thing to go; the
    interface must remain fully usable without any of it. */
 @media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
   *, *::before, *::after {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
   }
-  .aurora { animation: none; }
+  body.has-custom-cursor,
+  body.has-custom-cursor * { cursor: auto !important; }
 }
-
-
-/* Content sits above the ambient layers. Without this the aurora and grain,
-   being fixed, would paint over the page rather than behind it. */
-main { position: relative; z-index: 2; }

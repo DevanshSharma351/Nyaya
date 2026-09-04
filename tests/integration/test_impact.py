@@ -234,3 +234,55 @@ async def test_missing_version_is_rejected(session, amendment):
 
 async def test_controls_losing_authority_handles_empty_input(session):
     assert await controls_losing_authority(session, []) == []
+
+
+async def test_each_requirement_clause_pair_is_reported_once(session, amendment):
+    """A requirement with several edges to one clause is one item of work.
+
+    Regression: the walk emitted one entry per evidence row, so a requirement
+    re-extracted a few times - each run adding an edge to the same clause -
+    appeared once per edge. A review queue of three real items reported itself
+    as eleven, and the count is what a reviewer plans against.
+    """
+    project = Project(
+        name=f"impact-{uuid.uuid4().hex[:6]}", domain="ekyc_onboarding", jurisdictions=["IN"]
+    )
+    session.add(project)
+    await session.flush()
+
+    requirement = Requirement(
+        project_id=project.id,
+        ref="FR-DUP-001",
+        statement="The system shall screen the customer before activation.",
+        categories=["regulatory"],
+        priority=Priority.MUST,
+        risk_level=RiskLevel.HIGH,
+        approval_status=ApprovalStatus.APPROVED,
+    )
+    session.add(requirement)
+    await session.flush()
+
+    # Three edges to the same clause, as repeated extraction runs would leave.
+    for relation in (
+        EvidenceRelation.SUPPORTS,
+        EvidenceRelation.NEUTRAL,
+        EvidenceRelation.SUPPORTS,
+    ):
+        session.add(
+            Evidence(
+                requirement_id=requirement.id,
+                cited_key=f"{amendment}:22(a)",
+                relation=relation,
+                resolved=True,
+            )
+        )
+    await session.commit()
+
+    report = await analyse_change(
+        session, short_code=amendment, from_version="1", to_version="2"
+    )
+
+    mine = [a for a in report.affected if a.ref == "FR-DUP-001"]
+    assert len(mine) == 1, [f"{a.ref}/{a.citation_key}" for a in mine]
+    assert mine[0].citation_key == f"{amendment}:22(a)"
+    assert mine[0].severity == "stale"

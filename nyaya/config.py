@@ -76,6 +76,23 @@ class Settings(BaseSettings):
     env: str = Field(default="local", alias="NYAYA_ENV")
     log_level: str = Field(default="INFO", alias="NYAYA_LOG_LEVEL")
 
+    # --- api ---
+    # Origins allowed to call the API from a browser. Listed rather than
+    # wildcarded: this API returns compliance findings and must not be readable
+    # from an arbitrary page. It is configurable because the frontend origin is
+    # a deployment fact, not a constant - hardcoding :3000 meant a production
+    # build served on any other port could not reach its own backend, which is
+    # exactly how it failed the first time it was served from one.
+    cors_origins: str = Field(
+        default="http://localhost:3000,http://127.0.0.1:3000",
+        alias="NYAYA_CORS_ORIGINS",
+    )
+
+    @property
+    def allowed_origins(self) -> list[str]:
+        """`cors_origins` split into a list, blanks discarded."""
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
     # --- database ---
     postgres_user: str = "nyaya"
     postgres_password: str = "nyaya_dev_pw"

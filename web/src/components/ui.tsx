@@ -6,33 +6,29 @@
  * The rule these follow: ambient layers may move, data layers may not. A panel
  * can rise into place, but the number inside it does not animate, pulse or
  * shimmer. In a compliance tool a moving figure reads as a moving target.
+ *
+ * The exception is direct manipulation. A control the reader is physically
+ * pressing should answer immediately - that is feedback about their own action,
+ * not decoration applied to a finding.
  */
 
-import { motion } from "framer-motion";
+import { motion } from "motion/react";
 import type { ReactNode } from "react";
 
 export const spring = { type: "spring" as const, stiffness: 260, damping: 26 };
+export const press = { type: "spring" as const, stiffness: 520, damping: 30 };
 
-export function Panel({
-  children,
-  className = "",
-  delay = 0,
-}: {
-  children: ReactNode;
-  className?: string;
-  delay?: number;
-}) {
-  return (
-    <motion.section
-      initial={{ opacity: 0, y: 26 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, margin: "-60px" }}
-      transition={{ ...spring, delay }}
-      className={`glass-raised specular ${className}`}
-    >
-      {children}
-    </motion.section>
-  );
+/**
+ * Mixes a token colour with the page ground.
+ *
+ * This replaces string concatenation of the form `${tone}44`, which silently
+ * produced invalid CSS whenever `tone` was a custom property: `var(--gap)44` is
+ * not a colour, so the browser dropped the whole declaration and the tinted
+ * borders and backgrounds it was meant to create never rendered at all. It
+ * looked deliberate, because the text colour on its own still worked.
+ */
+function tint(tone: string, percent: number): string {
+  return `color-mix(in srgb, ${tone} ${percent}%, transparent)`;
 }
 
 export function SectionHeading({
@@ -46,12 +42,7 @@ export function SectionHeading({
 }) {
   return (
     <header className="mb-8 max-w-2xl">
-      <div
-        className="mono mb-3 uppercase"
-        style={{ color: "var(--accent)", letterSpacing: "0.14em" }}
-      >
-        {eyebrow}
-      </div>
+      <div className="eyebrow mb-3">{eyebrow}</div>
       <h2 className="title m-0">{title}</h2>
       {lede && (
         <p className="body mt-3" style={{ color: "var(--text-secondary)" }}>
@@ -77,7 +68,7 @@ export function Stat({
       <div
         style={{
           color: tone,
-          fontSize: "2rem",
+          fontSize: "1.875rem",
           fontWeight: 600,
           letterSpacing: "-0.03em",
           lineHeight: 1.1,
@@ -102,10 +93,11 @@ export function Badge({
       className="mono"
       style={{
         color: tone,
-        border: `1px solid ${tone}44`,
-        background: `${tone}12`,
-        borderRadius: 7,
-        padding: "3px 8px",
+        border: `1px solid ${tint(tone, 22)}`,
+        background: tint(tone, 7),
+        borderRadius: 6,
+        padding: "2px 7px",
+        fontSize: "0.75rem",
         whiteSpace: "nowrap",
       }}
     >
@@ -128,22 +120,26 @@ export function Button({
   const primary = variant === "primary";
   return (
     <motion.button
-      whileHover={disabled ? undefined : { scale: 1.02 }}
-      whileTap={disabled ? undefined : { scale: 0.98 }}
-      transition={spring}
+      // Scale down on press rather than up on hover. Pressing is the moment the
+      // reader is asking whether the control registered, and a control that
+      // yields under the pointer answers that faster than a colour change.
+      whileHover={disabled ? undefined : { y: -1 }}
+      whileTap={disabled ? undefined : { scale: 0.97, y: 0 }}
+      transition={press}
       onClick={onClick}
       disabled={disabled}
       style={{
-        background: primary ? "var(--accent)" : "var(--glass-strong)",
-        color: primary ? "#fff" : "var(--text)",
-        border: primary ? "none" : "1px solid var(--hairline)",
-        borderRadius: 12,
-        padding: "10px 18px",
-        fontSize: "0.9375rem",
-        fontWeight: 590,
+        background: primary ? "var(--accent)" : "var(--surface)",
+        color: primary ? "var(--accent-ink)" : "var(--text)",
+        border: primary ? "1px solid var(--accent)" : "1px solid var(--hairline)",
+        borderRadius: 10,
+        padding: "9px 16px",
+        fontSize: "0.875rem",
+        fontWeight: 550,
         letterSpacing: "-0.01em",
         cursor: disabled ? "not-allowed" : "pointer",
-        opacity: disabled ? 0.45 : 1,
+        opacity: disabled ? 0.4 : 1,
+        boxShadow: primary ? "var(--shadow-sm)" : "none",
       }}
     >
       {children}
@@ -159,7 +155,7 @@ export function Button({
  */
 export function Ring({
   value,
-  size = 112,
+  size = 96,
   tone = "var(--accent)",
   label,
 }: {
@@ -168,7 +164,7 @@ export function Ring({
   tone?: string;
   label?: string;
 }) {
-  const stroke = 8;
+  const stroke = 7;
   const radius = (size - stroke) / 2;
   const circumference = 2 * Math.PI * radius;
 
@@ -180,10 +176,20 @@ export function Ring({
           cy={size / 2}
           r={radius}
           fill="none"
-          stroke="rgba(255,255,255,0.08)"
+          stroke="var(--bg-inset)"
           strokeWidth={stroke}
         />
-        <motion.circle
+        {/*
+          Drawn at its value, with a CSS transition for later changes.
+
+          It used to sweep from empty on entering the viewport, which gated the
+          figure on an animation running - and when the document reports itself
+          hidden, it does not run, leaving an empty ring beside a real number.
+          It also contradicted the rule the rest of this file follows: data does
+          not animate. A reader should not have to wait to learn a coverage
+          ratio they are trying to act on.
+        */}
+        <circle
           cx={size / 2}
           cy={size / 2}
           r={radius}
@@ -192,10 +198,8 @@ export function Ring({
           strokeWidth={stroke}
           strokeLinecap="round"
           strokeDasharray={circumference}
-          initial={{ strokeDashoffset: circumference }}
-          whileInView={{ strokeDashoffset: circumference * (1 - value) }}
-          viewport={{ once: true }}
-          transition={{ duration: 0.9, ease: [0.16, 1, 0.3, 1] }}
+          strokeDashoffset={circumference * (1 - value)}
+          style={{ transition: "stroke-dashoffset 0.7s cubic-bezier(0.16,1,0.3,1)" }}
         />
       </svg>
       <div
@@ -208,7 +212,7 @@ export function Ring({
         }}
       >
         <div>
-          <div style={{ fontSize: "1.35rem", fontWeight: 600, letterSpacing: "-0.02em" }}>
+          <div style={{ fontSize: "1.125rem", fontWeight: 600, letterSpacing: "-0.02em" }}>
             {Math.round(value * 100)}%
           </div>
           {label && <div className="caption">{label}</div>}
@@ -220,10 +224,7 @@ export function Ring({
 
 export function Empty({ children }: { children: ReactNode }) {
   return (
-    <div
-      className="body"
-      style={{ color: "var(--text-tertiary)", padding: "28px 4px" }}
-    >
+    <div className="body" style={{ color: "var(--text-tertiary)", padding: "24px 4px" }}>
       {children}
     </div>
   );
@@ -236,8 +237,8 @@ export function Failure({ message }: { message: string }) {
       className="body"
       style={{
         color: "var(--gap)",
-        border: "1px solid var(--gap)44",
-        background: "var(--gap)10",
+        border: `1px solid ${tint("var(--gap)", 26)}`,
+        background: tint("var(--gap)", 5),
         borderRadius: 12,
         padding: "12px 14px",
       }}

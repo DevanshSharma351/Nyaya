@@ -110,6 +110,22 @@ export type SDLC = {
   explanation: string[];
 };
 
+export type Affected = {
+  ref: string;
+  statement: string;
+  severity: string;
+  citation_key: string;
+  detail: string;
+};
+
+export type Impact = {
+  summary: string;
+  changed_clauses: string[];
+  removed_clauses: string[];
+  added_clauses: string[];
+  affected: Affected[];
+};
+
 export type GraphNode = {
   id: string;
   kind: "requirement" | "clause" | "control" | "document";
@@ -150,6 +166,13 @@ export const api = {
     request<SDLC>("/analysis/sdlc", {
       method: "POST",
       body: JSON.stringify({ overrides }),
+    }),
+  clause: (key: string) =>
+    request<Clause>(`/knowledge/clause/${encodeURIComponent(key)}`),
+  impact: (short_code: string, from_version: string, to_version: string) =>
+    request<Impact>("/analysis/impact", {
+      method: "POST",
+      body: JSON.stringify({ short_code, from_version, to_version }),
     }),
   knowledgeGraph: () => request<Graph>("/graph/demo/knowledge"),
 };

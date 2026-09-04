@@ -1,13 +1,15 @@
 """Retrieval against the real corpus in the real database.
 
-These require the corpus to be ingested (`make corpus`); they skip rather than
-fail otherwise, so a clean checkout can still run the suite.
+The corpus is ingested into the test database by a session fixture, so these
+run on a clean checkout without any manual setup. They used to guard on "does
+the database contain any clauses at all", which passed on unrelated rows
+committed by other fixtures and then failed on the assertions.
 """
 
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from nyaya.db.models import Clause, SourceDocument
 from nyaya.retrieval.embedder import embed_query
@@ -19,11 +21,8 @@ from nyaya.retrieval.hybrid import (
 
 
 @pytest.fixture
-async def corpus(session):
-    count = (await session.execute(select(func.count(Clause.id)))).scalar_one()
-    if count == 0:
-        pytest.skip("corpus not ingested; run `make corpus`")
-    return count
+async def corpus(corpus_ingested):
+    return corpus_ingested
 
 
 async def test_dense_retrieval_finds_paraphrased_obligation(session, corpus):

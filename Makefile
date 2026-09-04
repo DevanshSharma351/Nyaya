@@ -1,4 +1,4 @@
-.PHONY: help setup hooks up down db-reset test lint fmt scan check
+.PHONY: help setup hooks up down db-reset corpus seed test lint fmt scan check
 
 help:
 	@grep -E '^[a-z-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n",$$1,$$2}'
@@ -22,6 +22,10 @@ db-reset: ## Drop and recreate the schema (destroys all data)
 
 corpus: ## Ingest the bundled regulatory corpus
 	uv run python scripts/ingest_corpus.py
+
+seed: corpus ## Corpus, plus the amendment and baseline the impact module needs
+	uv run python scripts/seed_amendment.py
+	uv run python scripts/seed_demo_project.py
 
 eval-retrieval: ## Benchmark the retrieval spine against the labelled set
 	uv run python -m nyaya.eval.retrieval_eval

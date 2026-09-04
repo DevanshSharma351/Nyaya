@@ -105,15 +105,31 @@ async def analyse_change(
 
     # Walk backwards along the citation edges: every requirement whose evidence
     # names an impacted clause key.
+    #
+    # Distinct on the pair, because the unit of review work is "this
+    # requirement's citation of this clause needs re-checking", not "this
+    # evidence row exists". A requirement can carry several evidence edges to
+    # the same clause - one per relation, and one per extraction run that
+    # re-derived it - and emitting one entry each inflated a queue of three real
+    # items into eleven identical ones. The count is what a reviewer plans
+    # against, so an inflated count is not a cosmetic problem.
     rows = (
         await session.execute(
             select(Requirement, Evidence.cited_key)
             .join(Evidence, Evidence.requirement_id == Requirement.id)
             .where(Evidence.cited_key.in_(impacted))
+            .distinct()
         )
     ).all()
 
+    seen: set[tuple[uuid.UUID, str]] = set()
     for requirement, cited_key in rows:
+        # `distinct()` operates on the whole selected row, and two evidence
+        # edges can differ in a column that is not projected here, so the pair
+        # still has to be checked explicitly.
+        if (requirement.id, cited_key) in seen:
+            continue
+        seen.add((requirement.id, cited_key))
         removed = cited_key in report.removed_clauses
         report.affected.append(
             AffectedRequirement(
@@ -132,6 +148,10 @@ async def analyse_change(
             )
         )
 
+    # Orphaned first: a requirement citing a clause that no longer exists is
+    # wrong now, while a stale one may well still be right. Then by ref, so the
+    # queue is stable between runs and two reviewers see the same order.
+    report.affected.sort(key=lambda a: (a.severity != "orphaned", a.ref, a.citation_key))
     return report
 
 
