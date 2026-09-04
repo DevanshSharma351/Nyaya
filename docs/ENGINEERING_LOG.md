@@ -739,3 +739,128 @@ re-enabling costs nothing, and the ADR records the re-measurement triggers
 - README corrected: it still advertised the hybrid claim this work refuted.
 
 **State: 63 tests passing, ruff clean, mypy clean across 36 source files.**
+
+---
+
+## 2026-09-04 — Extraction agent, and a hallucination the repair loop caused
+
+### The problem this had to solve
+
+The earlier measurement showed the model echoing a stakeholder's sentence back
+verbatim as a "requirement". That output was well-formed JSON, passed schema
+validation, and was useless. **Schema validation checks shape; nothing was
+checking whether the content was a requirement at all.**
+
+### Deterministic quality checks, written first
+
+Built before the agent, because they are what tell you whether the agent
+improved:
+
+- **`ears.py`** — the EARS grammar (ubiquitous / event-driven / state-driven /
+  unwanted / optional / complex). The value is not style enforcement: **a
+  statement matching an EARS pattern is structurally testable**, because the
+  pattern forces a subject, a modal obligation and an explicit trigger. "The
+  system should be secure" matches nothing. Also detects non-binding modals
+  (`should`, `may`) and compound requirements, which cannot be separately
+  approved, tested or traced.
+- **`lexicon.py`** — seven categories of ambiguous language with a named remedy
+  each, so feedback is "'appropriate' is unverifiable, state the threshold"
+  rather than an unfalsifiable request to be clearer.
+
+These run before any model: free, instant, reproducible, and specific.
+
+**Two false positives found and fixed by testing against well-formed input.** A
+linter that fires on good requirements is one reviewers learn to ignore:
+
+1. *Passive voice in a condition clause.* "While a customer **is categorised** as
+   high risk, the system shall…" — passive in a trigger describes a state and
+   hides no responsible actor. Now exempted inside the leading conditional.
+2. *Components of defined terms.* "high risk" is a regulatory category, not a
+   vague qualifier; the regulation supplies its meaning. Added a defined-terms
+   allowlist covering ~20 such phrases.
+
+Severity was added for the same reason: superlatives like "every high risk
+customer" are usually correct once scope is bounded elsewhere, so they are
+reported at INFO rather than blocking.
+
+### The agent: model proposes, linters judge, feedback is specific
+
+Few-shot exemplars rather than instructions alone, because exemplars demonstrate
+the *transformation* — stakeholder prose in, testable obligation out — which
+description had failed to convey. Each exemplar teaches one behaviour: rewrite
+rather than echo; split compounds; ask instead of invent.
+
+The repair loop is bounded at two attempts. A requirement that still fails is
+kept **with its defects recorded**, not discarded and not silently accepted: a
+defective requirement a human can see is worth more than a missing one.
+
+### Verified on held-out inputs, not just the exemplar
+
+The first successful run used an input nearly identical to an exemplar, so it
+proved nothing. Three held-out cases were run instead — a security architect on
+spoofing, an ops lead on redaction and access logging, and a deliberately vague
+product owner.
+
+Results: no echoing, correct and varied EARS patterns (`state_driven`,
+`unwanted`, `event_driven`), compounds correctly split (the ops statement became
+three separate requirements), and useful clarification questions.
+
+### The finding that mattered: the repair loop induced a fabrication
+
+Given "make onboarding as quick as possible", one repair round produced:
+
+> The system shall limit the onboarding process to no more than **three**
+> distinct user actions.
+
+**The stakeholder never said three.** Pressure to eliminate vague language was
+satisfied by inventing specificity.
+
+This is worse than the failure it replaced. The vague original is visibly
+incomplete; **the fabricated version reads as precise, passes every ambiguity
+check, and would be baselined and built.** The mechanism intended to improve
+quality manufactured a hallucination — and it is exactly the class of failure
+this project exists to prevent.
+
+### Fix — `quantities.py`, a deterministic quantity-provenance guard
+
+Every quantity a requirement asserts must trace to the source text. Comparison is
+after normalisation, since a stakeholder writes "five years" and a model writes
+"5 years".
+
+Deliberately narrow: quantities are *objectively* present or absent in the
+source. Judging invented prose is the LLM reviewer's job; this checks only what
+can be checked deterministically.
+
+Two refinements found by testing:
+
+- **Units are separated from their numbers by modifiers.** The first version
+  required the unit to follow immediately, so "three **distinct user** actions" —
+  the actual fabrication — slipped through. Up to three intervening words are now
+  tolerated.
+- **Identifiers are not thresholds.** `AES-256`, `ISO 27001` and "section 16"
+  name something external rather than asserting a magnitude, and are excluded.
+
+Re-run after the fix, the same input produces:
+
+> The system shall limit the onboarding process to **a defined number** of
+> distinct user actions.
+
+with the missing value raised in `unclear`.
+
+**Honest caveat:** the prompt was hardened in the same change, so the observed
+improvement cannot be attributed to either alone — this is a confounded fix. The
+detector's value is that it is a *guarantee* rather than a hope: if the prompt
+fails on some future input, the defect is still caught and recorded.
+
+### Known gaps
+
+- "modern" is not in the ambiguity lexicon and passed the linter. The model
+  raised it in `unclear` anyway, which is the right outcome by a different route.
+- EARS classification is syntactic. One statement used "If the video session is
+  initiated…" where "When" was correct — an ordinary event written as an
+  unwanted condition. No pattern matcher can catch that; it needs the semantic
+  reviewer.
+- Extraction takes **45–100 s** per input on `qwen3:8b`, and a repair round
+  roughly doubles it.
+
+**State: 96 tests passing, ruff clean, mypy clean across 44 source files.**
