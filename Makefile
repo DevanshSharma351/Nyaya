@@ -26,6 +26,9 @@ corpus: ## Ingest the bundled regulatory corpus
 eval-retrieval: ## Benchmark the retrieval spine against the labelled set
 	uv run python -m nyaya.eval.retrieval_eval
 
+eval-compliance: ## Measure the citation validator against the labelled set
+	uv run python -m nyaya.eval.compliance_eval
+
 test: ## Run the test suite
 	uv run pytest -q
 

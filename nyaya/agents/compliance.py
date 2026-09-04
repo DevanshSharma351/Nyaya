@@ -128,11 +128,44 @@ class ValidatedMapping:
 
     confidence: Confidence | None = None
     rejections: list[str] = field(default_factory=list)
+    """**Objective** failures only: the citation does not resolve, or the quote
+    was composed rather than copied. These are facts, not judgements."""
+
+    review_reasons: list[str] = field(default_factory=list)
+    """Probabilistic concerns. The mapping may well be correct; it has not been
+    machine-confirmed and needs a human."""
+
+    @property
+    def status(self) -> str:
+        """`rejected` | `needs_review` | `confirmed`.
+
+        The three-way split exists because the checks are not of one kind.
+        Citation resolution and quote verification are **objective** - a key
+        either resolves or it does not - so failing them is grounds for
+        rejection. Entailment is a **probabilistic judgement** by a
+        general-purpose model, measured on the labelled set at precision 0.909
+        but recall 0.588: it rejects roughly two in five correct citations.
+
+        Treating that as rejection would discard correct compliance mappings and
+        train reviewers to override the validator. So an unconfirmed citation is
+        routed to a human rather than thrown away. Only what can be checked
+        objectively is refused outright.
+        """
+        if self.rejections:
+            return "rejected"
+        if self.review_reasons:
+            return "needs_review"
+        return "confirmed"
 
     @property
     def accepted(self) -> bool:
-        """Whether the mapping survived every deterministic check."""
-        return not self.rejections
+        """Whether the mapping may be relied on without human confirmation."""
+        return self.status == "confirmed"
+
+    @property
+    def discarded(self) -> bool:
+        """Whether the mapping failed an objective check."""
+        return bool(self.rejections)
 
 
 @dataclass(slots=True)
@@ -145,24 +178,32 @@ class ComplianceResult:
     model: str = ""
 
     @property
-    def accepted(self) -> list[ValidatedMapping]:
-        return [m for m in self.mappings if m.accepted]
+    def confirmed(self) -> list[ValidatedMapping]:
+        return [m for m in self.mappings if m.status == "confirmed"]
+
+    @property
+    def needs_review(self) -> list[ValidatedMapping]:
+        return [m for m in self.mappings if m.status == "needs_review"]
 
     @property
     def rejected(self) -> list[ValidatedMapping]:
-        return [m for m in self.mappings if not m.accepted]
+        return [m for m in self.mappings if m.status == "rejected"]
 
     @property
-    def acceptance_rate(self) -> float:
-        """Share of proposals the validator accepted.
+    def accepted(self) -> list[ValidatedMapping]:
+        return self.confirmed
 
-        The headline measure of how much work the grounding layer is doing: a
-        rate near 1.0 means the validator is redundant, near 0.0 means the model
-        is fabricating freely.
+    @property
+    def rejection_rate(self) -> float:
+        """Share of proposals failing an *objective* check.
+
+        The direct measure of how much fabrication the grounding layer catches:
+        a citation that does not resolve, or a quotation that was composed
+        rather than copied.
         """
         if not self.mappings:
-            return 1.0
-        return len(self.accepted) / len(self.mappings)
+            return 0.0
+        return len(self.rejected) / len(self.mappings)
 
 
 def _render_evidence(clauses: list[Retrieved]) -> str:
@@ -290,16 +331,29 @@ async def _validate(
     mapping.entailment_score = verdict.entailment_score
     mapping.entailment_verified = verdict.verified
 
-    if verdict.verified and not verdict.supports:
+    if not verdict.verified:
+        mapping.review_reasons.append(
+            "entailment could not be checked (no NLI model available)"
+        )
+    elif verdict.relation is EvidenceRelation.CONTRADICTS and verdict.score > 0.8:
+        # A confident contradiction is a substantive finding, not mere doubt.
         mapping.rejections.append(
-            f"the cited clause does not entail the requirement "
-            f"(relation={verdict.relation.value}, entailment={verdict.entailment_score:.2f})"
+            f"the cited clause appears to contradict the requirement "
+            f"(score={verdict.score:.2f})"
+        )
+    elif not verdict.supports:
+        mapping.review_reasons.append(
+            f"entailment not machine-confirmed "
+            f"(relation={verdict.relation.value}, entailment={verdict.entailment_score:.2f}); "
+            f"the mapping may still be correct and requires human confirmation"
         )
 
     mapping.confidence = fuse(
         ConfidenceComponents(
             retrieval=_normalise(mapping.retrieval_score),
             entailment=mapping.entailment_score,
+            # Objective checks passed in full; unconfirmed entailment reduces
+            # confidence through its own component rather than zeroing this one.
             validation=1.0 if not mapping.rejections else 0.0,
             consistency=1.0 if mapping.rule_seeded else 0.5,
         )

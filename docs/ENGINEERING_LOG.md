@@ -1002,3 +1002,136 @@ worth more than mapping one that complies.
   labelled set above, after which the calibration curve becomes meaningful.
 
 **State: 128 tests passing, ruff clean, mypy clean across 50 source files.**
+
+---
+
+## 2026-09-04 — Measuring the citation validator, and two things it revealed
+
+Built a labelled set of **49 (requirement, clause) judgements** over 12
+requirements — 17 genuine citations and 32 wrong ones, of which 31 are
+**topically adjacent**: a retention clause cited for a screening duty, the
+sibling sub-clause governing a neighbouring obligation. Random negatives would
+prove nothing; these are the citations a model actually produces when it errs.
+
+No language model is involved. The labelled citation goes straight to the
+validator, isolating the validator's own discriminating power from the
+proposing model's accuracy.
+
+### Result — precise, but not sensitive
+
+| threshold | precision | recall | F1 |
+|---|---|---|---|
+| 0.10 | 0.769 | 0.588 | 0.667 |
+| **0.20** | **0.909** | **0.588** | **0.714** |
+| 0.55 | 0.909 | 0.588 | 0.714 |
+| 0.80 | 0.889 | 0.471 | 0.615 |
+
+The validator rejects almost every wrong citation (1 false accept in 32) and
+**rejects 7 of 17 correct ones**. The 0.20–0.55 plateau also shows the previously
+guessed 0.55 threshold was not harmful, but was chosen on no evidence.
+
+### Why the false rejections happen — and why reversing direction does not help
+
+The seven failures score near *zero*, not near the threshold. That is not a
+tuning problem. Inspecting them shows a pattern:
+
+> clause: "the pseudonymisation and encryption of personal data"
+> requirement: "encrypt customer identification documents transmitted over public networks"
+
+**The requirement is more specific than the clause.** A general duty does not
+logically entail a particular implementation — though the implementation plainly
+*satisfies* the duty. Regulatory compliance is a satisfaction relation, not
+logical entailment, and MNLI measures the latter.
+
+The obvious fix — reverse the direction and ask whether the requirement entails
+the clause — was tested and **rejected on measurement**: it lifted a wrong
+citation (`GDPR:Article 5.1(e)`, 0.012 → 0.634) as much as a right one
+(`5.1(c)`, 0.015 → 0.633). It shifts scores without discriminating.
+
+Excluding the preamble from the context chain was also tested, and made no
+difference (0.004 → 0.003).
+
+**Conclusion: a general-purpose MNLI model cannot be the sole citation
+validator.** That is a limitation of the method, not a bug to be tuned away.
+
+### Design change — objective checks reject, probabilistic checks route to review
+
+The error profile is usable if the architecture stops treating all checks alike.
+Validation now has **three outcomes**, not two:
+
+| check | kind | on failure |
+|---|---|---|
+| citation resolves to a real clause | objective fact | **reject** |
+| quotation copied, not composed | objective fact | **reject** |
+| clause confidently contradicts | substantive finding | **reject** |
+| clause does not confirm entailment | probabilistic judgement | **needs review** |
+
+An unconfirmed citation is *not* discarded. Treating a 0.588-recall signal as
+rejection would throw away two in five correct compliance mappings and train
+reviewers to override the validator — the failure mode that makes a checker
+worse than none.
+
+At the selected threshold:
+
+- **10/17** correct citations auto-confirmed
+- **7/17** correct citations routed to a human, not lost
+- **1** wrong citation auto-confirmed — the number that actually matters
+
+This also fits the human-in-the-loop design the brief requires, rather than
+fighting it.
+
+### Second finding — the confidence score was badly calibrated, and the structure was why
+
+First measurement: **ECE 0.276**. The [0.4, 0.6) band held 38 citations of which
+only **18 %** were genuine — confidently wrong exactly where a reviewer would
+trust the number.
+
+The cause was structural, not a weighting mistake. A weighted sum let retrieval,
+validation and consistency supply a **floor of 0.522 regardless of entailment**,
+so a citation whose clause obliged nothing still scored 0.52.
+
+Replaced with a gated form that mirrors what the signals actually mean:
+
+- **validation is a gate** — objective facts; failure means zero.
+- **entailment bounds the score** — the only signal testing the claim against its
+  cited authority. A citation the clause does not oblige cannot be confident
+  however well it was retrieved.
+- **retrieval and consistency corroborate** — they modulate within the range
+  entailment permits and cannot establish confidence alone.
+
+| | ECE | high-confidence band [0.8,1.0) |
+|---|---|---|
+| weighted sum | 0.276 | — |
+| **gated** | **0.143** | stated 0.907 vs actual 0.889 (gap 0.018) |
+
+ECE roughly halved, and the band that matters most — where auto-confirmation
+happens — is now near-perfectly calibrated. The residual error is in the
+low-confidence band, which is *under*confident: correct citations the NLI model
+scores near zero. That is the recall limitation above, showing up honestly in
+the calibration rather than being hidden.
+
+### A methodological note
+
+The earlier calibration figure binned by "was the accept/reject decision
+correct". That is a different quantity from the one the score claims, and it
+flattered the result: a correctly rejected citation scores low *because* it is
+wrong, so counting it as an underconfident success understates miscalibration.
+Calibration is now measured against the claim the score actually makes — *this
+citation is genuine*.
+
+### Honest limitations
+
+- **49 judgements over 12 requirements** is small, and the labels are the
+  author's own. A second annotator and an inter-annotator agreement statistic
+  would materially strengthen this; without one, the negatives in particular
+  reflect a single reading of what a regulator would accept.
+- The single false confirmation (`RBI-MD-KYC:22(c)`, ongoing re-screening cited
+  for a pre-activation duty, entailment 0.910) is a genuine miss: the clauses are
+  near-identical in wording and differ in *when* the duty applies. Temporal
+  scope is precisely what NLI does not model.
+- The obvious next step is an LLM judge as a second opinion on the
+  `needs_review` band, measured against the same labelled set to see whether it
+  recovers recall without importing the fabrication risk the whole design exists
+  to contain.
+
+**State: 144 tests passing, ruff clean, mypy clean across 52 source files.**

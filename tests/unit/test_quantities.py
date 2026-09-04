@@ -16,8 +16,7 @@ from nyaya.agents.quality.quantities import extract_quantities, unsupported_quan
 def test_the_observed_fabrication_is_caught():
     """The exact statement produced by a repair round, and its actual source."""
     statement = (
-        "The system shall limit the onboarding process to no more than three "
-        "distinct user actions."
+        "The system shall limit the onboarding process to no more than three distinct user actions."
     )
     source = (
         "onboarding needs to be really smooth and modern, users hate friction, "

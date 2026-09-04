@@ -51,15 +51,19 @@ def test_components_are_retained_for_explanation():
     result = fuse(components)
     assert result.components.entailment == 0.4
     assert set(result.as_dict()["components"]) == {
-        "retrieval", "entailment", "validation", "consistency",
+        "retrieval",
+        "entailment",
+        "validation",
+        "consistency",
     }
 
 
 def test_score_is_bounded():
     assert fuse(ConfidenceComponents()).score == 0.0
-    assert fuse(
-        ConfidenceComponents(retrieval=1, entailment=1, validation=1, consistency=1)
-    ).score == 1.0
+    assert (
+        fuse(ConfidenceComponents(retrieval=1, entailment=1, validation=1, consistency=1)).score
+        == 1.0
+    )
 
 
 def test_review_threshold_separates_the_examples():
@@ -74,3 +78,51 @@ def test_agreement_measures_sample_stability():
     assert agreement([]) == 0.0
     # whitespace and case differences are not disagreement
     assert agreement(["The  System", "the system"]) == 1.0
+
+
+# --- gated structure ------------------------------------------------------
+#
+# A weighted sum was measured on the labelled citation set and found badly
+# miscalibrated (ECE 0.276): the non-entailment signals gave every proposal a
+# floor of 0.52 regardless of whether the clause obliged anything. These tests
+# pin the gated replacement.
+
+
+def test_zero_entailment_cannot_be_rescued_by_retrieval():
+    """The exact miscalibration that motivated the change.
+
+    Under the weighted sum this scored 0.522 - confidently wrong, in the band a
+    reviewer would trust.
+    """
+    result = fuse(
+        ConfidenceComponents(retrieval=0.95, entailment=0.0, validation=1.0, consistency=1.0)
+    )
+    assert result.score == 0.0
+    assert result.needs_review
+
+
+def test_failed_objective_check_is_a_hard_gate():
+    """Citation resolution and quote verification are facts, not judgements."""
+    result = fuse(
+        ConfidenceComponents(retrieval=0.99, entailment=0.99, validation=0.0, consistency=0.99)
+    )
+    assert result.score == 0.0
+
+
+def test_strong_entailment_survives_weak_corroboration():
+    """Corroborating signals modulate; they do not veto."""
+    result = fuse(
+        ConfidenceComponents(retrieval=0.1, entailment=0.95, validation=1.0, consistency=0.5)
+    )
+    assert result.score > REVIEW_THRESHOLD
+
+
+def test_score_is_monotonic_in_entailment():
+    def at(e: float) -> float:
+        return fuse(
+            ConfidenceComponents(retrieval=0.7, entailment=e, validation=1.0, consistency=0.7)
+        ).score
+
+    scores = [at(e) for e in (0.0, 0.25, 0.5, 0.75, 1.0)]
+    assert scores == sorted(scores)
+    assert scores[0] == 0.0

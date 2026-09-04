@@ -24,16 +24,17 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 
-# Weights. Entailment carries the most because it is the only signal that
-# directly tests the claim against its cited authority; retrieval scores merely
-# say something topically similar was found. Validation is binary and acts more
-# as a gate than a gradient.
-WEIGHTS: dict[str, float] = {
-    "retrieval": 0.20,
-    "entailment": 0.40,
-    "validation": 0.25,
-    "consistency": 0.15,
+# Corroboration weights. These modulate a score that entailment has already
+# bounded; they never establish confidence on their own.
+CORROBORATION_WEIGHTS: dict[str, float] = {
+    "retrieval": 0.55,
+    "consistency": 0.45,
 }
+
+# The share of the score that entailment alone commands. The remainder is what
+# corroborating signals can add, so a well-entailed citation with weak retrieval
+# still scores well while a poorly-entailed one cannot be rescued.
+ENTAILMENT_SHARE = 0.70
 
 # Below this a claim must not be presented as supported; it is routed for human
 # review instead. Deliberately high: the cost of a wrong compliance mapping that
@@ -83,12 +84,42 @@ class Confidence:
 
 
 def fuse(components: ConfidenceComponents) -> Confidence:
-    """Combine signals into one score, recording why it is not higher."""
-    score = sum(WEIGHTS[name] * value for name, value in components.as_dict().items())
+    """Combine signals into one score, recording why it is not higher.
+
+    **Gated, not a weighted sum.** A weighted sum was measured on the labelled
+    citation set and found badly miscalibrated (ECE 0.276): retrieval,
+    validation and consistency together gave every proposal a floor of 0.52
+    *regardless of entailment*, so a citation with zero entailment still scored
+    0.522. The [0.4,0.6) confidence band held 38 citations of which only 18 %
+    were genuine - confidently wrong exactly where a reviewer would trust it.
+
+    So the structure mirrors what the signals mean:
+
+    - **validation is a gate.** It records objective facts - the citation
+      resolves, the quotation was copied. If those fail, nothing else matters
+      and the score is zero.
+    - **entailment bounds the score.** It is the only signal that tests the
+      claim against its cited authority. A citation the clause does not oblige
+      cannot be confident however well it was retrieved.
+    - **retrieval and consistency corroborate.** They modulate within the range
+      entailment permits; they cannot establish confidence on their own.
+    """
+    if components.validation <= 0.0:
+        return Confidence(
+            score=0.0,
+            components=components,
+            reasons=["a deterministic validation check failed"],
+        )
+
+    corroboration = (
+        CORROBORATION_WEIGHTS["retrieval"] * components.retrieval
+        + CORROBORATION_WEIGHTS["consistency"] * components.consistency
+    )
+    score = components.entailment * (
+        ENTAILMENT_SHARE + (1.0 - ENTAILMENT_SHARE) * corroboration
+    )
 
     reasons: list[str] = []
-    if components.validation < 1.0:
-        reasons.append("a deterministic validation check failed")
     if components.entailment < 0.5:
         reasons.append("the cited clause does not clearly entail the claim")
     if components.retrieval < 0.3:
@@ -115,8 +146,9 @@ def agreement(samples: list[str]) -> float:
 
 
 __all__ = [
+    "CORROBORATION_WEIGHTS",
+    "ENTAILMENT_SHARE",
     "REVIEW_THRESHOLD",
-    "WEIGHTS",
     "Confidence",
     "ConfidenceComponents",
     "agreement",

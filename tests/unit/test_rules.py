@@ -41,8 +41,12 @@ def test_control_ids_are_unique():
     [
         ("category_any", ["security"], {"categories": ["security", "functional"]}, True),
         ("category_any", ["privacy"], {"categories": ["security"]}, False),
-        ("category_all", ["security", "functional"],
-         {"categories": ["security", "functional"]}, True),
+        (
+            "category_all",
+            ["security", "functional"],
+            {"categories": ["security", "functional"]},
+            True,
+        ),
         ("category_all", ["security", "privacy"], {"categories": ["security"]}, False),
         ("text_matches", "screen", {"statement": "shall screen the customer"}, True),
         ("text_absent", "screen", {"statement": "shall verify identity"}, True),
@@ -67,11 +71,17 @@ def test_malformed_pack_is_rejected_at_load(tmp_path):
     bad.write_text(
         yaml.safe_dump(
             {
-                "name": "x", "version": "1", "jurisdiction": "IN",
+                "name": "x",
+                "version": "1",
+                "jurisdiction": "IN",
                 "domain": "ekyc_onboarding",
                 "controls": [
-                    {"id": "A", "title": "t", "citations": ["X:1"],
-                     "applies_when": [{"nonsense_kind": ["a"]}]}
+                    {
+                        "id": "A",
+                        "title": "t",
+                        "citations": ["X:1"],
+                        "applies_when": [{"nonsense_kind": ["a"]}],
+                    }
                 ],
             }
         )
@@ -85,7 +95,9 @@ def test_uncited_control_is_rejected_at_load(tmp_path):
     bad.write_text(
         yaml.safe_dump(
             {
-                "name": "x", "version": "1", "jurisdiction": "IN",
+                "name": "x",
+                "version": "1",
+                "jurisdiction": "IN",
                 "domain": "ekyc_onboarding",
                 "controls": [{"id": "A", "title": "t", "citations": []}],
             }
@@ -123,9 +135,7 @@ def test_full_coverage_leaves_no_gaps():
         (
             f"FR-{i:03d}",
             requirement_facts(
-                statement=" ".join(
-                    c.satisfied_when[0].value.replace("\\b", "").split("|")[0:1]
-                )
+                statement=" ".join(c.satisfied_when[0].value.replace("\\b", "").split("|")[0:1])
                 if c.satisfied_when
                 else "",
                 categories=["regulatory", "security", "functional"],
