@@ -2194,3 +2194,99 @@ one element only, where it cannot hide a genuine mismatch in the application.
 
 **State: 248 tests passing, ruff and mypy clean across 80 source files; frontend
 builds with tsc and eslint clean across eight routes.**
+
+---
+
+## Session: extraction was discarding most of what it found
+
+### Two requirements from a brief containing twelve obligations
+
+Reported as "it gives 1-3 max, probably taken from the prompt". The exemplars
+were a reasonable suspect — both are small, and a model does anchor on them —
+but they were not the cause. Calling the model directly with the *same prompt*
+returned thirteen requirements. The loss was ours.
+
+**The repair pass replaced the requirement set instead of amending it.** Its
+instruction says "rewrite ONLY the statements listed below", the model obeyed
+and returned only those, and the pipeline assigned the result over the previous
+output. Thirteen requirements became the two that happened to be flagged.
+
+The repair pass can no longer express a set. It returns indexed rewrites which
+are spliced into the requirements they belong to, and the list is never
+reassigned. A repair returning nothing now leaves thirteen requirements rather
+than none.
+
+Two things compounded it, both worth recording:
+
+**Ollama's context window defaults to 4096 and truncates silently.** Extraction
+does not fit: prompt and exemplars around 1,300 tokens, the JSON Schema grammar
+another 950, the answer for a dense brief 1,700 — and then a repair turn
+re-sends all of it plus the first answer. `num_ctx` is set explicitly now. This
+was invisible because nothing ever reported truncation; the model simply
+produced less.
+
+**Repaired statements arrived carrying the model's own explanation** — "... The
+quoted source for this requirement is: ...". Telling it not to did not stop it,
+so a repair is trimmed to its first sentence and rejected if what remains is not
+an obligation. Rejecting is the safe direction: the original stays flagged and
+visible with its defect attached, whereas a mangled statement that looks
+repaired removes the defect from the record without removing the problem.
+
+Measured on the same brief: 2 → 13, none carrying bleed.
+
+### Seven lifecycles was a misreading of the brief
+
+It says "such as Agile, DevSecOps, Spiral, V-Model, Waterfall, or a hybrid" —
+an example list. Ranking only those cannot recommend incremental delivery for a
+phased core-banking migration, or Kanban for a team whose work arrives rather
+than being planned. Six models added, each with a full profile and its own
+cadence and activities in the generated workflow.
+
+The profiles carry the judgement. Prototyping scores low on regulatory
+criticality and failure consequence because a prototype-led payments switch
+would be negligent, and the ranking should say so rather than relying on the
+reader to know.
+
+The workflow test, parametrised over every model, failed immediately for the
+six new ones for having no cadence. That is what it was written for.
+
+### Long work did not survive navigation
+
+Starting an extraction and reading something else lost it. Each module held its
+own state, React destroyed it on unmount, and returning showed an empty form
+while the island still reported the job running — the request had continued,
+since `fetch` is not cancelled by unmounting, and its result was written into
+state nobody could see.
+
+Jobs moved into the layout, which the App Router does not re-render on
+navigation. The provider owns the promise, so a page unmounting mid-flight loses
+nothing, and returning restores the submitted input, the running state or the
+finished result.
+
+The island now reads the same record rather than being pushed to. That is the
+actual fix for the inconsistency: there were two sources of truth and they
+diverged within seconds of a navigation. Seed queries also fire only when a
+module has no job, so coming back no longer discards the reader's own search.
+
+### Four of ten quality checks
+
+`DefectType` declared the ten checks §10 lists and produced four. Three of the
+missing ones are properties of a *set* — duplication, conflicting expectations,
+and a quantity nothing verifies — and could not be found one statement at a
+time. They also only began to matter once extraction stopped losing
+requirements: at two there is nothing to contradict.
+
+The ordering here was wrong first time and the tests caught it. Conflicts are
+now checked before duplicates and without an upper bound on similarity: two
+requirements identical except for a retention period had scored as duplicates,
+and so had "shall disclose" against "shall not disclose", because the word that
+reverses the meaning is one piece of noise in an otherwise shared sentence.
+Near-identical wording makes a conflict *more* likely, not less.
+
+Contradiction by meaning is deliberately not attempted. The entailment model
+could be asked, but that is seventy-eight pairs at thirteen requirements, and a
+confident false conflict sends someone to argue with a stakeholder about a
+disagreement that does not exist.
+
+**State: 279 tests passing, ruff and mypy clean across 81 source files; frontend
+builds with tsc and eslint clean across eight routes.**
