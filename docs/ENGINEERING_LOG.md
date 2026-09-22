@@ -2112,3 +2112,85 @@ and no error anywhere. All seven pass, each with both canvases correctly sized.
 **State: 219 tests passing, ruff and mypy clean across 76 source files; frontend
 builds with tsc and eslint clean across seven routes; all seven verified
 rendering live data.**
+
+---
+
+## Session: a segfault, and the two deliverables the brief asked for that were missing
+
+### The API was segfaulting, not being stopped
+
+The previous session concluded the API "died because the shell call ended".
+That was wrong. It exits **139 — SIGSEGV** — and the crash is reproducible.
+
+The trigger is concurrent search. Four simultaneous `/knowledge/search`
+requests kill the process instantly; the crash log shows exactly that pattern,
+two OPTIONS for `search` from different connections immediately before the
+fault. The frontend produces it on one page load, because React double-invokes
+effects in development and the retrieval module seeds a query on mount.
+
+The cause is the machine, not the code changing underneath it. This project's
+Python was x86-64 running under Rosetta — Next.js warned about it in every
+build. The macOS upgrade to Darwin 27 brought a native arm64 Python, and
+`torch.backends.mps.is_available()` went from False to True. The reranker now
+loads on `mps:0` instead of CPU.
+
+A single cached model instance called from several `asyncio.to_thread` workers
+was never thread-safe. On CPU that was racy and survived; on Metal it faults.
+Serialised behind one lock covering both torch models — they contend for the
+same GPU anyway, inference is short, and the two never run concurrently in the
+pipeline. The lock is taken inside the worker thread, so the event loop is
+never blocked.
+
+Worth recording as a class of bug: **an environment change silently switched a
+code path that had never been exercised.** No commit introduced it, and the
+tests passed throughout, because nothing fired concurrent inference. There is a
+test now, and its failure mode is blunt — it terminates the test process rather
+than failing an assertion, which is still better than finding out from a
+browser.
+
+### Two deliverables the brief names and the project did not produce
+
+Re-reading the problem statement against the code found two substantial gaps.
+
+**§15, the project-specific SDLC workflow.** The system ranked lifecycle models
+and stopped. A label tells a team what to call their process; the brief asks for
+phases, activities, roles, deliverables, security activities, testing
+requirements, compliance checkpoints, approval gates, entry and exit criteria
+and traceability requirements. That is the half of "SDLC identification" a name
+does not deliver.
+
+Generated deterministically. Each lifecycle has a skeleton, and the project's
+own findings customise it: blocking gaps add a remediation activity and an exit
+criterion, critical requirements add threat modelling and a penetration test,
+open questions add a resolution activity. Every non-skeleton line carries the
+finding that put it there, so nothing in the output is unchallengeable.
+
+The workflow may only name gates that exist in the graph. Writing that rule
+immediately caught three invented gate keys, and revealed a real omission: the
+brief lists production-readiness among the mandatory human approvals and the
+engine had no such gate. Added.
+
+**§12, the artefacts.** The system could say a great deal about a requirement
+and hand over nothing anyone could take to a review. There is now a
+traceability matrix, user stories with acceptance criteria, use cases, a risk
+register, an open-issues list and an assumptions register.
+
+Derived, not written. Statements are the ones that passed the quality checks,
+acceptance criteria are the extracted ones, and a use case's exception paths are
+its detected defects rather than invented failure modes. The one transformation
+that could have been generated — requirement to user story — is done by
+template, because a template that occasionally reads stiffly beats a sentence
+that occasionally invents a user.
+
+The traceability matrix reports its own gaps rather than tidying them. A blank
+citation column is the finding such a matrix exists to surface, and the coverage
+figure derived from it is one of the brief's twelve evaluation metrics.
+
+### Also
+
+The hydration warning was a browser extension — Grammarly writes
+`data-gr-ext-installed` onto `<body>` before React hydrates. Suppressed on that
+one element only, where it cannot hide a genuine mismatch in the application.
+
+**State: 248 tests passing, ruff and mypy clean across 80 source files; frontend
+builds with tsc and eslint clean across eight routes.**
