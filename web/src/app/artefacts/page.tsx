@@ -22,7 +22,7 @@
 import dynamic from "next/dynamic";
 import { useState } from "react";
 import { Block, ModuleShell, Rationale } from "@/components/chrome/ModuleShell";
-import { useTaskReporter } from "@/components/chrome/StatusIsland";
+import { useJob } from "@/components/chrome/Jobs";
 import { Badge, Button, Empty, Failure, Ring } from "@/components/ui";
 import { api, type Artefacts } from "@/lib/api";
 
@@ -53,32 +53,24 @@ const TABS: [Tab, string][] = [
 ];
 
 export default function ArtefactsPage() {
-  const [text, setText] = useState(SEED);
-  const [result, setResult] = useState<Artefacts | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const { job, run: runJob } = useJob<Artefacts>("artefacts");
+  const result = job.result ?? null;
+  const error = job.error ?? null;
+  const busy = job.state === "running";
+
+  const [text, setText] = useState(job.input ?? SEED);
   const [tab, setTab] = useState<Tab>("traceability");
-  const report = useTaskReporter();
 
   async function run() {
-    setBusy(true);
-    setError(null);
-    report({ state: "running", label: "Generating artefacts", detail: "40–100s" });
-    try {
-      const next = await api.artefacts(text);
-      setResult(next);
-      report({
-        state: "done",
+    await runJob(
+      text,
+      () => api.artefacts(text),
+      (next) => ({
         label: `${next.traceability.length} requirements`,
         detail: `${Math.round(next.traceability_coverage * 100)}% fully traced`,
-      });
-    } catch (e) {
-      setError((e as Error).message);
-      setResult(null);
-      report({ state: "failed", label: "Generation failed", detail: (e as Error).message });
-    } finally {
-      setBusy(false);
-    }
+      }),
+      { label: "Generating artefacts", detail: "40-100s" },
+    );
   }
 
   return (

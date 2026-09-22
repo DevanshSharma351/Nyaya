@@ -12,7 +12,7 @@
 
 import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
-import { useTaskReporter } from "@/components/chrome/StatusIsland";
+import { useJob } from "@/components/chrome/Jobs";
 import { Block, ModuleShell, Rationale } from "@/components/chrome/ModuleShell";
 import { Badge, Button, Empty, Failure } from "@/components/ui";
 import { api, type SDLC, type SDLCFromBrief } from "@/lib/api";
@@ -79,35 +79,22 @@ export default function LifecyclePage() {
   // The brief path. Separate state, because a derived recommendation and a
   // hand-set one are different claims and should not overwrite each other
   // silently - the reader needs to know which of the two they are looking at.
-  const [brief, setBrief] = useState(BRIEF);
-  const [derived, setDerived] = useState<SDLCFromBrief | null>(null);
-  const [derivingError, setDerivingError] = useState<string | null>(null);
-  const [deriving, setDeriving] = useState(false);
-  const report = useTaskReporter();
+  const { job, run: runJob } = useJob<SDLCFromBrief>("lifecycle");
+  const derived = job.result ?? null;
+  const derivingError = job.error ?? null;
+  const deriving = job.state === "running";
+  const [brief, setBrief] = useState(job.input ?? BRIEF);
 
   async function deriveFromBrief() {
-    setDeriving(true);
-    setDerivingError(null);
-    report({
-      state: "running",
-      label: "Reading the brief",
-      detail: "extracting requirements, then ranking",
-    });
-    try {
-      const next = await api.sdlcFromBrief(brief);
-      setDerived(next);
-      report({
-        state: "done",
+    await runJob(
+      brief,
+      () => api.sdlcFromBrief(brief),
+      (next) => ({
         label: next.recommendation.recommended.replace(/_/g, " "),
         detail: `derived from ${next.requirements_extracted} requirements`,
-      });
-    } catch (e) {
-      setDerivingError((e as Error).message);
-      setDerived(null);
-      report({ state: "failed", label: "Could not read the brief", detail: (e as Error).message });
-    } finally {
-      setDeriving(false);
-    }
+      }),
+      { label: "Reading the brief", detail: "extracting, then ranking" },
+    );
   }
 
   useEffect(() => {

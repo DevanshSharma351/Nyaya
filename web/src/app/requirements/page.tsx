@@ -13,7 +13,7 @@
 import dynamic from "next/dynamic";
 import { useState } from "react";
 import { Block, ModuleShell, Rationale } from "@/components/chrome/ModuleShell";
-import { useTaskReporter } from "@/components/chrome/StatusIsland";
+import { useJob } from "@/components/chrome/Jobs";
 import { Badge, Button, Empty, Failure } from "@/components/ui";
 import { api, type Clarification, type ExtractResult } from "@/lib/api";
 
@@ -35,11 +35,16 @@ const RISK_TONE: Record<string, string> = {
 };
 
 export default function RequirementsPage() {
-  const [text, setText] = useState(SEED);
-  const [result, setResult] = useState<ExtractResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const report = useTaskReporter();
+  // The job lives above this page, so an extraction started here survives a
+  // navigation away and is still here on return - running or finished.
+  const { job, run: runJob } = useJob<ExtractResult>("requirements");
+  const result = job.result ?? null;
+  const error = job.error ?? null;
+  const busy = job.state === "running";
+
+  // Seeded from the job when one exists, so returning to the module restores
+  // the text that was actually submitted rather than the placeholder.
+  const [text, setText] = useState(job.input ?? SEED);
 
   // Answers to the questions the last extraction raised. Held here and sent
   // back on the next run, where the API folds them into the source text - so an
@@ -56,35 +61,26 @@ export default function RequirementsPage() {
           .map(([question, answer]) => ({ question, answer: answer.trim() }))
       : [];
 
-    setBusy(true);
-    setError(null);
-    // Extraction runs on a local model and takes long enough that a still page
-    // is indistinguishable from a broken one, so the island carries the state
-    // while the reader is free to scroll or leave the module.
-    report({ state: "running", label: "Extracting requirements", detail: "40–100s" });
-    try {
-      const extracted = await api.extract(text, clarifications);
-      setResult(extracted);
-      const defects = extracted.requirements.reduce(
-        (total, requirement) => total + requirement.defects.length,
-        0,
-      );
-      report({
-        state: "done",
-        label: `${extracted.requirements.length} requirements`,
-        detail: defects > 0 ? `${defects} defects flagged` : "no defects detected",
-      });
-      // Answers that have been folded into the brief are consumed. Keeping
-      // them would silently re-apply them to a brief the reader may have since
-      // rewritten.
-      if (clarifications.length > 0) setAnswers({});
-    } catch (e) {
-      setError((e as Error).message);
-      setResult(null);
-      report({ state: "failed", label: "Extraction failed", detail: (e as Error).message });
-    } finally {
-      setBusy(false);
-    }
+    await runJob(
+      text,
+      () => api.extract(text, clarifications),
+      (extracted) => {
+        const defects = extracted.requirements.reduce(
+          (total, requirement) => total + requirement.defects.length,
+          0,
+        );
+        return {
+          label: `${extracted.requirements.length} requirements`,
+          detail: defects > 0 ? `${defects} defects flagged` : "no defects detected",
+        };
+      },
+      // Extraction runs on a local model and takes long enough that a still
+      // page is indistinguishable from a broken one.
+      { label: "Extracting requirements", detail: "40-100s" },
+    );
+    // Answers folded into the brief are consumed; keeping them would silently
+    // re-apply them to a brief the reader may since have rewritten.
+    if (clarifications.length > 0) setAnswers({});
   }
 
   return (

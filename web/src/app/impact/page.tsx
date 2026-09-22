@@ -17,6 +17,7 @@
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useState } from "react";
 import { Block, ModuleShell, Rationale } from "@/components/chrome/ModuleShell";
+import { useJob } from "@/components/chrome/Jobs";
 import { Badge, Button, Empty, Failure } from "@/components/ui";
 import { api, type Impact, type SourceDocument } from "@/lib/api";
 
@@ -34,9 +35,10 @@ export default function ImpactPage() {
   const [code, setCode] = useState("RBI-MD-KYC");
   const [from, setFrom] = useState("1");
   const [to, setTo] = useState("2");
-  const [impact, setImpact] = useState<Impact | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const { job, run: runJob } = useJob<Impact>("impact");
+  const impact = job.result ?? null;
+  const error = job.error ?? null;
+  const busy = job.state === "running";
 
   useEffect(() => {
     let cancelled = false;
@@ -58,32 +60,28 @@ export default function ImpactPage() {
   const availableVersions = selected?.versions ?? [];
 
   const run = useCallback(async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      setImpact(await api.impact(code, from, to));
-    } catch (e) {
-      setError((e as Error).message);
-      setImpact(null);
-    } finally {
-      setBusy(false);
-    }
-  }, [code, from, to]);
+    await runJob(
+      `${code} v${from} to v${to}`,
+      () => api.impact(code, from, to),
+      (result) => ({
+        label: `${result.affected.length} affected`,
+        detail: `${result.changed_clauses.length} amended, ${result.removed_clauses.length} removed`,
+      }),
+      { label: "Walking the amendment" },
+    );
+  }, [code, from, to, runJob]);
 
   // The default scenario is loaded once on mount. It deliberately does not
   // re-run when the fields change: typing "12" on the way to "12.1" would fire
   // a 404 for the intermediate value and paint an error the reader never
   // caused. Analysing is an explicit action.
+  // Seeded once, and only when the module has no job.
+  const untouched = job.state === "idle";
   useEffect(() => {
-    let cancelled = false;
-    api
-      .impact("RBI-MD-KYC", "1", "2")
-      .then((result) => !cancelled && setImpact(result))
-      .catch((e) => !cancelled && setError((e as Error).message));
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    if (!untouched) return;
+    void run();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [untouched]);
 
   const field = {
     background: "var(--glass)",

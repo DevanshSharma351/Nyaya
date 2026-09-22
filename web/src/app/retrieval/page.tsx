@@ -11,7 +11,7 @@
 import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 import { Block, ModuleShell, Rationale } from "@/components/chrome/ModuleShell";
-import { useTaskReporter } from "@/components/chrome/StatusIsland";
+import { useJob } from "@/components/chrome/Jobs";
 import ClauseResult from "@/components/ClauseResult";
 import { Button, Empty, Failure } from "@/components/ui";
 import { api, type Clause } from "@/lib/api";
@@ -28,12 +28,13 @@ const EXAMPLES = [
 ];
 
 export default function RetrievalPage() {
-  const [query, setQuery] = useState(EXAMPLES[0]);
-  const [results, setResults] = useState<Clause[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const { job, run: runJob } = useJob<Clause[]>("retrieval");
+  const results = job.result ?? null;
+  const error = job.error ?? null;
+  const busy = job.state === "running";
+
+  const [query, setQuery] = useState(job.input ?? EXAMPLES[0]);
   const [corpusSize, setCorpusSize] = useState(0);
-  const report = useTaskReporter();
 
   useEffect(() => {
     let cancelled = false;
@@ -51,43 +52,34 @@ export default function RetrievalPage() {
   // opens with an empty panel and an empty result list gives a reader nothing
   // to judge. Landing on a worked example is also how the scene becomes
   // legible: with no results there are no columns in it.
+  // The first example runs on arrival, but only when the module has no job
+  // already. Seeding unconditionally would discard the reader's own search
+  // every time they navigated back to this page.
+  const untouched = job.state === "idle";
   useEffect(() => {
-    let cancelled = false;
-    api
-      .search(EXAMPLES[0], 6)
-      .then((found) => !cancelled && setResults(found))
-      // Surfaced rather than swallowed. This was silent, so with the API down
-      // the module showed "Run a search to see which clauses govern it" - an
-      // invitation to do something that could not work, and no hint why.
-      .catch((e) => !cancelled && setError((e as Error).message));
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    if (!untouched) return;
+    void run(EXAMPLES[0]);
+    // Deliberately keyed on nothing else: this is a one-shot seed, and
+    // depending on `run` would re-fire it whenever the query text changed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [untouched]);
 
   async function run(value: string) {
-    setBusy(true);
-    setError(null);
-    report({ state: "running", label: "Searching the corpus" });
-    try {
-      const found = await api.search(value, 6);
-      setResults(found);
-      const best = found[0]?.relevance;
-      report({
-        state: "done",
-        label: `${found.length} clauses`,
-        detail:
-          found.length === 0
-            ? "nothing matched"
-            : `top result ${found[0].citation_key}${best != null ? ` · ${best.toFixed(3)}` : ""}`,
-      });
-    } catch (e) {
-      setError((e as Error).message);
-      setResults(null);
-      report({ state: "failed", label: "Search failed", detail: (e as Error).message });
-    } finally {
-      setBusy(false);
-    }
+    await runJob(
+      value,
+      () => api.search(value, 6),
+      (found) => {
+        const best = found[0]?.relevance;
+        return {
+          label: `${found.length} clauses`,
+          detail:
+            found.length === 0
+              ? "nothing matched"
+              : `top ${found[0].citation_key}${best != null ? ` - ${best.toFixed(3)}` : ""}`,
+        };
+      },
+      { label: "Searching the corpus" },
+    );
   }
 
   return (

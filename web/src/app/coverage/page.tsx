@@ -11,7 +11,7 @@
 import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 import { Block, ModuleShell, Rationale } from "@/components/chrome/ModuleShell";
-import { useTaskReporter } from "@/components/chrome/StatusIsland";
+import { useJob } from "@/components/chrome/Jobs";
 import { Badge, Button, Empty, Failure, Ring } from "@/components/ui";
 import { api, type Coverage } from "@/lib/api";
 
@@ -32,48 +32,35 @@ function tone(control: { is_gap: boolean; severity: string }) {
 }
 
 export default function CoveragePage() {
-  const [text, setText] = useState(SEED);
-  const [report, setReport] = useState<Coverage | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const reportTask = useTaskReporter();
+  const { job, run: runJob } = useJob<Coverage | null>("coverage");
+  const report = job.result ?? null;
+  const error = job.error ?? null;
+  const busy = job.state === "running";
+  const [text, setText] = useState(job.input ?? SEED);
 
   async function run(value: string) {
-    setBusy(true);
-    reportTask({ state: "running", label: "Assessing against the control pack" });
-    try {
-      const reports = await api.coverage(value);
-      const first = reports[0] ?? null;
-      setReport(first);
-      setError(null);
-      reportTask(
+    await runJob(
+      value,
+      async () => (await api.coverage(value))[0] ?? null,
+      (first) =>
         first
           ? {
-              state: "done",
               label: `${first.blocking_gaps.length} blocking gaps`,
               detail: `${Math.round(first.coverage_ratio * 100)}% of ${first.pack} covered`,
             }
-          : { state: "done", label: "No applicable pack", detail: "nothing to assess" },
-      );
-    } catch (e) {
-      setError((e as Error).message);
-      setReport(null);
-      reportTask({ state: "failed", label: "Assessment failed", detail: (e as Error).message });
-    } finally {
-      setBusy(false);
-    }
+          : { label: "No applicable pack", detail: "nothing to assess" },
+      { label: "Assessing against the control pack" },
+    );
   }
 
+  // Seeded once, and only when the module has no job - otherwise returning
+  // here would discard whatever the reader had assessed.
+  const untouched = job.state === "idle";
   useEffect(() => {
-    let cancelled = false;
-    api
-      .coverage(SEED)
-      .then((reports) => !cancelled && setReport(reports[0] ?? null))
-      .catch((e) => !cancelled && setError((e as Error).message));
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    if (!untouched) return;
+    void run(SEED);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [untouched]);
 
   const gaps = report?.controls.filter((c) => c.is_gap) ?? [];
   const covered = report?.controls.filter((c) => !c.is_gap) ?? [];

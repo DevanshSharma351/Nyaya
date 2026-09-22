@@ -23,18 +23,17 @@
  * every page - on the impact module it covered a form field. Persistent state
  * belongs in the rail, where it is always in the same place and never on top of
  * anything; the island is for things that are happening now and then stop.
+ *
+ * What it shows is read from the job store rather than pushed into it by
+ * whichever page happens to be mounted. That is what keeps the island and the
+ * module consistent: previously a page reported a job starting, then unmounted
+ * on navigation and never reported it finishing, so the island span forever
+ * while the work had long since completed. One record, two readers.
  */
 
 import { Check, Loader2, TriangleAlert } from "lucide-react";
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useState,
-  type ReactNode,
-} from "react";
+import { useEffect } from "react";
+import { useActiveJob } from "./Jobs";
 import {
   DynamicContainer,
   DynamicDescription,
@@ -50,18 +49,6 @@ export type Task = {
   detail?: string;
 };
 
-type TaskContext = {
-  task: Task | null;
-  report: (task: Task | null) => void;
-};
-
-const Context = createContext<TaskContext>({ task: null, report: () => {} });
-
-/** Lets any module report a long-running operation to the island. */
-export function useTaskReporter() {
-  return useContext(Context).report;
-}
-
 function Body({ task }: { task: Task | null }) {
   const { setSize } = useDynamicIslandSize();
 
@@ -72,16 +59,6 @@ function Body({ task }: { task: Task | null }) {
     }
     setSize(task.state === "running" ? "long" : "large");
   }, [task, setSize]);
-
-  // Results clear themselves. A finished state that stays forever becomes
-  // furniture, and the next run's "done" is then indistinguishable from the
-  // last one's.
-  const { report } = useContext(Context);
-  useEffect(() => {
-    if (!task || task.state === "running") return;
-    const timer = setTimeout(() => report(null), 4200);
-    return () => clearTimeout(timer);
-  }, [task, report]);
 
   if (!task) return null;
 
@@ -133,27 +110,28 @@ function Body({ task }: { task: Task | null }) {
   );
 }
 
-export function StatusIslandProvider({ children }: { children: ReactNode }) {
-  const [task, setTask] = useState<Task | null>(null);
-
-  const report = useCallback((next: Task | null) => setTask(next), []);
-  const value = useMemo(() => ({ task, report }), [task, report]);
+export function StatusIsland() {
+  const active = useActiveJob();
+  const task: Task | null = active
+    ? {
+        state: active[1].state === "idle" ? "done" : active[1].state,
+        label: active[1].label ?? "Working",
+        detail: active[1].detail,
+      }
+    : null;
 
   return (
-    <Context.Provider value={value}>
-      {children}
-      <div
-        className="pointer-events-none fixed inset-x-0 bottom-6 hidden md:block"
-        style={{ zIndex: "var(--z-island)" as unknown as number }}
-        role="status"
-        aria-live="polite"
-      >
-        <DynamicIslandProvider initialSize="empty">
-          <DynamicIsland id="nyaya-status">
-            <Body task={task} />
-          </DynamicIsland>
-        </DynamicIslandProvider>
-      </div>
-    </Context.Provider>
+    <div
+      className="pointer-events-none fixed inset-x-0 bottom-6 hidden md:block"
+      style={{ zIndex: "var(--z-island)" as unknown as number }}
+      role="status"
+      aria-live="polite"
+    >
+      <DynamicIslandProvider initialSize="empty">
+        <DynamicIsland id="nyaya-status">
+          <Body task={task} />
+        </DynamicIsland>
+      </DynamicIslandProvider>
+    </div>
   );
 }

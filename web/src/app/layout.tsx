@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import Cursor from "@/components/chrome/Cursor";
 import Rail from "@/components/chrome/Rail";
-import { StatusIslandProvider } from "@/components/chrome/StatusIsland";
+import { JobsProvider } from "@/components/chrome/Jobs";
+import { StatusIsland } from "@/components/chrome/StatusIsland";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -41,11 +42,18 @@ export default function RootLayout({
         exactly the bugs this warning exists to catch.
       */}
       <body suppressHydrationWarning>
-        <StatusIslandProvider>
+        {/*
+          Jobs outside the island, because the island is one of two readers of
+          the same record and the pages are the other. A long extraction
+          therefore survives navigation: the request is owned here, and
+          returning to a module restores whatever it had.
+        */}
+        <JobsProvider>
           <Rail />
           <Cursor />
           {children}
-        </StatusIslandProvider>
+          <StatusIsland />
+        </JobsProvider>
       </body>
     </html>
   );
