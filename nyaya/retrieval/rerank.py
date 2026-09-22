@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING
 
 from nyaya.config import get_settings
 from nyaya.retrieval.hybrid import Retrieved
+from nyaya.retrieval.inference import exclusive
 
 if TYPE_CHECKING:  # pragma: no cover
     from sentence_transformers import CrossEncoder
@@ -72,7 +73,9 @@ def rerank_sync(
     # clauses that enclose it. Where no context has been loaded the two are
     # identical, so this is safe for callers that rerank a bare shortlist.
     pairs = [(query, c.contextual) for c in candidates]
-    scores = model.predict(pairs, show_progress_bar=False)
+    # Serialised: the model is shared and this runs in a worker thread. See
+    # nyaya/retrieval/inference.py - concurrent calls segfault on Metal.
+    scores = exclusive(lambda: model.predict(pairs, show_progress_bar=False))
 
     for candidate, score in zip(candidates, scores, strict=True):
         candidate.rerank_score = float(score)

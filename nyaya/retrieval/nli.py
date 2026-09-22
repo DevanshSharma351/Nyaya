@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING
 
 from nyaya.config import get_settings
 from nyaya.core.enums import EvidenceRelation
+from nyaya.retrieval.inference import exclusive
 
 if TYPE_CHECKING:  # pragma: no cover
     from transformers import Pipeline
@@ -170,7 +171,9 @@ def check_sync(
         hypothesis = to_obligation_claim(hypothesis)
     try:
         model = _load(model_name or get_settings().nli_model)
-        scores = model({"text": premise, "text_pair": hypothesis})
+        # Serialised: the pipeline is shared and this runs in a worker thread.
+        # See nyaya/retrieval/inference.py - concurrent calls segfault on Metal.
+        scores = exclusive(lambda: model({"text": premise, "text_pair": hypothesis}))
     except Exception:
         return UNVERIFIED
 
