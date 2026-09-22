@@ -19,6 +19,7 @@ import { usePathname } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
 import {
   Activity,
+  FileText,
   GitBranch,
   Library,
   ListChecks,
@@ -105,6 +106,7 @@ const ICONS: Record<IconName, LucideIcon> = {
   library: Library,
   search: Search,
   "list-checks": ListChecks,
+  "file-text": FileText,
   "shield-check": ShieldCheck,
   "git-branch": GitBranch,
   activity: Activity,

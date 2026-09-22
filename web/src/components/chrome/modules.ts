@@ -20,6 +20,7 @@ export type IconName =
   | "library"
   | "search"
   | "list-checks"
+  | "file-text"
   | "shield-check"
   | "git-branch"
   | "activity";
@@ -42,6 +43,12 @@ export const MODULES: Module[] = [
     icon: "list-checks",
     name: "Requirements",
     question: "What must the system do, in testable form?",
+  },
+  {
+    href: "/artefacts",
+    icon: "file-text",
+    name: "Artefacts",
+    question: "What do we hand to the team?",
   },
   {
     href: "/coverage",

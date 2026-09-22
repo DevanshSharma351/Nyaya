@@ -9,7 +9,9 @@ from nyaya.agents.extraction import extract
 from nyaya.agents.schemas import ExtractionContext
 from nyaya.api.deps import db_session
 from nyaya.api.schemas import (
+    ActivityOut,
     AffectedOut,
+    ArtefactsOut,
     BriefIn,
     ControlCoverageOut,
     CoverageOut,
@@ -17,13 +19,24 @@ from nyaya.api.schemas import (
     FactorsIn,
     ImpactIn,
     ImpactOut,
+    PhaseOut,
+    RiskEntryOut,
     SDLCFromBriefOut,
     SDLCOut,
     SDLCRankOut,
+    TraceRowOut,
+    UseCaseOut,
+    UserStoryOut,
+    WorkflowIn,
+    WorkflowOut,
 )
+from nyaya.artefacts import build as build_artefacts
+from nyaya.core.enums import RiskLevel, SDLCModel
 from nyaya.graph.impact import analyse_change
 from nyaya.mcda.derive import derive
 from nyaya.mcda.sdlc import default_factors, recommend
+from nyaya.mcda.workflow import Workflow
+from nyaya.mcda.workflow import generate as generate_workflow
 from nyaya.rules.engine import evaluate, requirement_facts
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
@@ -183,12 +196,137 @@ async def recommend_sdlc_from_brief(payload: BriefIn):
         ),
     )
     derivation = derive(result.requirements, result.unclear)
+    ranking = recommend(derivation.factors)
+    critical = sum(
+        1
+        for item in result.requirements
+        if item.requirement.risk_level in (RiskLevel.HIGH, RiskLevel.CRITICAL)
+    )
+    workflow = generate_workflow(
+        ranking.recommended,
+        critical_requirements=critical,
+        open_questions=len(result.unclear),
+    )
     return SDLCFromBriefOut(
-        recommendation=_to_sdlc_out(recommend(derivation.factors)),
+        recommendation=_to_sdlc_out(ranking),
+        workflow=_to_workflow_out(workflow),
         factors=derivation.factors,
         observations=derivation.observations,
         requirements_extracted=len(result.requirements),
         unclear=result.unclear,
+    )
+
+
+def _to_workflow_out(workflow: Workflow) -> WorkflowOut:
+    return WorkflowOut(
+        model=workflow.model.value,
+        cadence=workflow.cadence,
+        phases=[
+            PhaseOut(
+                name=phase.name,
+                purpose=phase.purpose,
+                entry_criteria=phase.entry_criteria,
+                exit_criteria=phase.exit_criteria,
+                activities=[
+                    ActivityOut(
+                        name=a.name, role=a.role, because=a.because,
+                        security=a.security, compliance=a.compliance,
+                    )
+                    for a in phase.activities
+                ],
+                deliverables=phase.deliverables,
+                roles=phase.roles,
+                gate=phase.gate,
+            )
+            for phase in workflow.phases
+        ],
+        traceability=workflow.traceability,
+        notes=workflow.notes,
+    )
+
+
+@router.post("/sdlc/workflow", response_model=WorkflowOut)
+async def sdlc_workflow(payload: WorkflowIn):
+    """Generate the project-specific workflow for a chosen lifecycle.
+
+    Separate from the recommendation because the two are different decisions: a
+    team may reject the ranking and still want the workflow for the model they
+    chose instead.
+    """
+    try:
+        model = SDLCModel(payload.model)
+    except ValueError:
+        raise HTTPException(
+            422, f"unknown lifecycle model {payload.model!r}"
+        ) from None
+    return _to_workflow_out(
+        generate_workflow(
+            model,
+            blocking_gaps=payload.blocking_gaps,
+            critical_requirements=payload.critical_requirements,
+            open_questions=payload.open_questions,
+            legacy_integration=payload.legacy_integration,
+        )
+    )
+
+
+@router.post("/artefacts", response_model=ArtefactsOut)
+async def generate_artefacts(payload: ExtractIn):
+    """Produce the artefact set the brief lists as expected outputs.
+
+    Derived from an extraction rather than written by a model: the statements
+    are the ones that passed the quality checks, the acceptance criteria are the
+    extracted ones, and the traceability matrix is the join the system has been
+    maintaining all along. A generated SRS containing requirements nobody
+    approved would be indistinguishable from one containing requirements they
+    did, which is the whole problem this system exists to avoid.
+    """
+    result = await extract(
+        _with_clarifications(payload),
+        context=ExtractionContext(
+            domain=payload.domain, jurisdictions=payload.jurisdictions
+        ),
+    )
+    artefacts = build_artefacts(
+        result.requirements, project=payload.domain, unclear=result.unclear
+    )
+    return ArtefactsOut(
+        project=artefacts.project,
+        generated_at=artefacts.generated_at,
+        user_stories=[
+            UserStoryOut(
+                ref=s.ref, text=s.text, role=s.role, trigger=s.trigger,
+                acceptance_criteria=s.acceptance_criteria,
+            )
+            for s in artefacts.user_stories
+        ],
+        use_cases=[
+            UseCaseOut(
+                ref=u.ref, name=u.name, actor=u.actor, precondition=u.precondition,
+                main_flow=u.main_flow, postcondition=u.postcondition,
+                exceptions=u.exceptions,
+            )
+            for u in artefacts.use_cases
+        ],
+        traceability=[
+            TraceRowOut(
+                ref=r.ref, statement=r.statement, source_quote=r.source_quote,
+                citations=r.citations, controls=r.controls,
+                verification=r.verification, approval_status=r.approval_status,
+                confidence=r.confidence, gaps=r.gaps,
+            )
+            for r in artefacts.traceability
+        ],
+        traceability_coverage=round(artefacts.traceability_coverage, 4),
+        risks=[
+            RiskEntryOut(
+                ref=r.ref, description=r.description, category=r.category,
+                level=r.level, score=r.score, treatment=r.treatment, owner=r.owner,
+            )
+            for r in artefacts.risks
+        ],
+        open_issues=artefacts.open_issues,
+        assumptions=artefacts.assumptions,
     )
 
 

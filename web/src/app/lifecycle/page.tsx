@@ -234,6 +234,122 @@ export default function LifecyclePage() {
                 ))}
               </ul>
 
+              {/*
+                The workflow is the half of "SDLC identification" a label does
+                not deliver. Shown immediately under the ranking because the
+                ranking is the decision and this is what the decision means in
+                practice.
+              */}
+              <div className="mt-6" style={{ borderTop: "1px solid var(--hairline)", paddingTop: 20 }}>
+                <div className="headline mb-1">The workflow this produces</div>
+                <p className="caption mb-4" style={{ maxWidth: 640 }}>
+                  {derived.workflow.cadence}
+                </p>
+
+                {derived.workflow.notes.map((note) => (
+                  <p
+                    key={note}
+                    className="caption mb-2"
+                    style={{ color: "var(--review)" }}
+                  >
+                    {note}
+                  </p>
+                ))}
+
+                <div className="mt-4 flex flex-col gap-3">
+                  {derived.workflow.phases.map((phase) => (
+                    <details key={phase.name} className="glass p-4">
+                      <summary
+                        className="flex flex-wrap items-center gap-2"
+                        style={{ cursor: "pointer", listStyle: "none" }}
+                      >
+                        <span className="headline">{phase.name}</span>
+                        {phase.gate && (
+                          <Badge tone="var(--review)">gate · {phase.gate}</Badge>
+                        )}
+                        <Badge>{phase.activities.length} activities</Badge>
+                        <Badge>{phase.roles.length} roles</Badge>
+                      </summary>
+
+                      <p className="caption mt-2 mb-3">{phase.purpose}</p>
+
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <div>
+                          <div className="caption" style={{ color: "var(--text)" }}>
+                            Entry criteria
+                          </div>
+                          <ul className="caption" style={{ paddingLeft: 16, margin: 0 }}>
+                            {phase.entry_criteria.map((c) => (
+                              <li key={c}>{c}</li>
+                            ))}
+                          </ul>
+                        </div>
+                        <div>
+                          <div className="caption" style={{ color: "var(--text)" }}>
+                            Exit criteria
+                          </div>
+                          <ul className="caption" style={{ paddingLeft: 16, margin: 0 }}>
+                            {phase.exit_criteria.map((c) => (
+                              <li key={c}>{c}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+
+                      <div className="caption mt-3" style={{ color: "var(--text)" }}>
+                        Activities
+                      </div>
+                      <div className="mt-1 flex flex-col gap-1.5">
+                        {phase.activities.map((activity) => (
+                          <div key={activity.name} className="caption">
+                            <span style={{ color: "var(--text)" }}>{activity.name}</span>
+                            {" — "}
+                            {activity.role}
+                            {activity.security && (
+                              <span style={{ color: "var(--gap)" }}> · security</span>
+                            )}
+                            {activity.compliance && (
+                              <span style={{ color: "var(--confirmed)" }}> · compliance</span>
+                            )}
+                            {/* Anything the skeleton did not contain says why it
+                                is there, so no line is unchallengeable. */}
+                            {activity.because && (
+                              <div style={{ color: "var(--review)", paddingLeft: 12 }}>
+                                added because {activity.because}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+
+                      {phase.deliverables.length > 0 && (
+                        <>
+                          <div className="caption mt-3" style={{ color: "var(--text)" }}>
+                            Deliverables
+                          </div>
+                          <ul className="caption" style={{ paddingLeft: 16, margin: 0 }}>
+                            {phase.deliverables.map((d) => (
+                              <li key={d}>{d}</li>
+                            ))}
+                          </ul>
+                        </>
+                      )}
+                    </details>
+                  ))}
+                </div>
+
+                <div className="caption mt-4" style={{ color: "var(--text)" }}>
+                  Traceability requirements
+                </div>
+                <ul className="caption" style={{ paddingLeft: 16, margin: 0 }}>
+                  {derived.workflow.traceability.map((line) => (
+                    <li key={line} style={{ marginBottom: 3 }}>
+                      {line}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
               {derived.unclear.length > 0 && (
                 <div className="mt-5">
                   <div className="headline mb-1" style={{ color: "var(--review)" }}>

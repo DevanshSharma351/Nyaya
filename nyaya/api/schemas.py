@@ -170,6 +170,107 @@ class SDLCFromBriefOut(BaseModel):
     observations: list[str]
     requirements_extracted: int
     unclear: list[str]
+    workflow: WorkflowOut
+    """The recommendation made concrete. A lifecycle name tells a team what to
+    call their process; the workflow tells them how to run it, which is the half
+    of "SDLC identification" a label alone does not deliver."""
+
+
+# --- generated artefacts (brief §12) ----------------------------------------
+
+
+class UserStoryOut(BaseModel):
+    ref: str
+    text: str
+    role: str
+    trigger: str | None
+    acceptance_criteria: list[str]
+
+
+class UseCaseOut(BaseModel):
+    ref: str
+    name: str
+    actor: str
+    precondition: str
+    main_flow: list[str]
+    postcondition: str
+    exceptions: list[str]
+
+
+class TraceRowOut(BaseModel):
+    ref: str
+    statement: str
+    source_quote: str
+    citations: list[str]
+    controls: list[str]
+    verification: list[str]
+    approval_status: str
+    confidence: float | None
+    gaps: list[str]
+    """Blank columns, reported rather than hidden. An incomplete chain is the
+    finding a traceability matrix exists to surface."""
+
+
+class RiskEntryOut(BaseModel):
+    ref: str
+    description: str
+    category: str
+    level: str
+    score: int
+    treatment: str
+    owner: str
+
+
+class ArtefactsOut(BaseModel):
+    project: str
+    generated_at: datetime
+    user_stories: list[UserStoryOut]
+    use_cases: list[UseCaseOut]
+    traceability: list[TraceRowOut]
+    traceability_coverage: float
+    risks: list[RiskEntryOut]
+    open_issues: list[str]
+    assumptions: list[str]
+
+
+# --- generated lifecycle workflow (brief §15) --------------------------------
+
+
+class ActivityOut(BaseModel):
+    name: str
+    role: str
+    because: str | None
+    security: bool
+    compliance: bool
+
+
+class PhaseOut(BaseModel):
+    name: str
+    purpose: str
+    entry_criteria: list[str]
+    exit_criteria: list[str]
+    activities: list[ActivityOut]
+    deliverables: list[str]
+    roles: list[str]
+    gate: str | None
+
+
+class WorkflowOut(BaseModel):
+    model: str
+    cadence: str
+    phases: list[PhaseOut]
+    traceability: list[str]
+    notes: list[str]
+
+
+class WorkflowIn(BaseModel):
+    """Which lifecycle, and what the analysis found about the project."""
+
+    model: str
+    blocking_gaps: int = Field(default=0, ge=0)
+    critical_requirements: int = Field(default=0, ge=0)
+    open_questions: int = Field(default=0, ge=0)
+    legacy_integration: bool = False
 
 
 class ImpactIn(BaseModel):
@@ -225,7 +326,9 @@ class HealthOut(BaseModel):
 
 
 __all__ = [
+    "ActivityOut",
     "AffectedOut",
+    "ArtefactsOut",
     "BriefIn",
     "Clarification",
     "ClauseOut",
@@ -241,11 +344,18 @@ __all__ = [
     "HealthOut",
     "ImpactIn",
     "ImpactOut",
+    "PhaseOut",
     "ProjectIn",
     "ProjectOut",
     "RequirementOut",
+    "RiskEntryOut",
     "SDLCFromBriefOut",
     "SDLCOut",
     "SDLCRankOut",
     "SearchIn",
+    "TraceRowOut",
+    "UseCaseOut",
+    "UserStoryOut",
+    "WorkflowIn",
+    "WorkflowOut",
 ]

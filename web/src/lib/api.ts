@@ -131,12 +131,92 @@ export type SDLCRank = {
 
 export type Clarification = { question: string; answer: string };
 
+export type UserStory = {
+  ref: string;
+  text: string;
+  role: string;
+  trigger: string | null;
+  acceptance_criteria: string[];
+};
+
+export type UseCase = {
+  ref: string;
+  name: string;
+  actor: string;
+  precondition: string;
+  main_flow: string[];
+  postcondition: string;
+  exceptions: string[];
+};
+
+export type TraceRow = {
+  ref: string;
+  statement: string;
+  source_quote: string;
+  citations: string[];
+  controls: string[];
+  verification: string[];
+  approval_status: string;
+  confidence: number | null;
+  gaps: string[];
+};
+
+export type RiskEntry = {
+  ref: string;
+  description: string;
+  category: string;
+  level: string;
+  score: number;
+  treatment: string;
+  owner: string;
+};
+
+export type Artefacts = {
+  project: string;
+  generated_at: string;
+  user_stories: UserStory[];
+  use_cases: UseCase[];
+  traceability: TraceRow[];
+  traceability_coverage: number;
+  risks: RiskEntry[];
+  open_issues: string[];
+  assumptions: string[];
+};
+
+export type Activity = {
+  name: string;
+  role: string;
+  because: string | null;
+  security: boolean;
+  compliance: boolean;
+};
+
+export type Phase = {
+  name: string;
+  purpose: string;
+  entry_criteria: string[];
+  exit_criteria: string[];
+  activities: Activity[];
+  deliverables: string[];
+  roles: string[];
+  gate: string | null;
+};
+
+export type Workflow = {
+  model: string;
+  cadence: string;
+  phases: Phase[];
+  traceability: string[];
+  notes: string[];
+};
+
 export type SDLCFromBrief = {
   recommendation: SDLC;
   factors: Record<string, number>;
   observations: string[];
   requirements_extracted: number;
   unclear: string[];
+  workflow: Workflow;
 };
 
 export type SDLC = {
@@ -216,6 +296,16 @@ export const api = {
     request<Impact>("/analysis/impact", {
       method: "POST",
       body: JSON.stringify({ short_code, from_version, to_version }),
+    }),
+  artefacts: (text: string, clarifications: Clarification[] = []) =>
+    request<Artefacts>("/analysis/artefacts", {
+      method: "POST",
+      body: JSON.stringify({ text, clarifications }),
+    }),
+  workflow: (model: string, observations: Record<string, number | boolean> = {}) =>
+    request<Workflow>("/analysis/sdlc/workflow", {
+      method: "POST",
+      body: JSON.stringify({ model, ...observations }),
     }),
   knowledgeGraph: () => request<Graph>("/graph/demo/knowledge"),
 };
