@@ -22,7 +22,7 @@ import re
 from dataclasses import dataclass, field
 
 from nyaya.agents.prompts import build_extraction_messages, build_repair_message
-from nyaya.agents.quality import ears, lexicon
+from nyaya.agents.quality import consistency, ears, lexicon
 from nyaya.agents.quality.quantities import unsupported_quantities
 from nyaya.agents.schemas import (
     ExtractedRequirement,
@@ -265,12 +265,54 @@ async def extract(
             for item in analysed:
                 item.repair_attempts = rounds
 
+    # Cross-requirement checks last, because they are properties of the set and
+    # the set is only final once repair has stopped changing it.
+    _attach_set_defects(analysed)
+
     return ExtractionResult(
         requirements=analysed,
         unclear=unclear,
         model=f"{provider.name}:{provider.model}",
         repair_rounds=rounds,
     )
+
+
+_SET_DEFECT_TYPE = {
+    "duplication": DefectType.DUPLICATION,
+    "conflict": DefectType.CONFLICTING_EXPECTATION,
+    "incompleteness": DefectType.INCOMPLETENESS,
+}
+
+# A conflict is a stakeholder decision and blocks; a duplicate wastes review
+# time but nothing downstream is wrong; an unverified quantity is a gap in the
+# test plan rather than in the requirement.
+_SET_DEFECT_SEVERITY = {
+    "duplication": Severity.MAJOR,
+    "conflict": Severity.BLOCKER,
+    "incompleteness": Severity.MAJOR,
+}
+
+
+def _attach_set_defects(analysed: list[AnalysedRequirement]) -> None:
+    """Run the cross-requirement checks and hang them on the right statement.
+
+    These are not sent to the repair loop. A duplicate cannot be fixed by
+    rewriting one of the pair - deleting one is a decision about scope - and a
+    conflict is two stakeholders disagreeing, which is not a defect in a
+    sentence. Both belong in front of a person.
+    """
+    statements = [item.requirement.statement for item in analysed]
+    criteria = [list(item.requirement.acceptance_criteria) for item in analysed]
+
+    for found in consistency.analyse_set(statements, criteria):
+        analysed[found.left].defects.append(
+            RequirementDefect(
+                defect_type=_SET_DEFECT_TYPE[found.kind],
+                severity=_SET_DEFECT_SEVERITY[found.kind],
+                detail=found.detail,
+                detector=f"requirement_set.{found.kind}",
+            )
+        )
 
 
 def _analyse(requirement: ExtractedRequirement, source_text: str) -> AnalysedRequirement:
