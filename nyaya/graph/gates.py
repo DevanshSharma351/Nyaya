@@ -83,6 +83,21 @@ GATES: dict[str, Gate] = {
         ),
         required_roles=(StakeholderRole.PRODUCT_OWNER, StakeholderRole.ARCHITECT),
     ),
+    "production_readiness": Gate(
+        name="production_readiness",
+        description=(
+            "Approve release to production. The brief lists this among the "
+            "decisions a human must make, and it is the one gate whose subject "
+            "is not a document: everything upstream can be corrected in a later "
+            "version, and this one puts the system in front of customers and "
+            "their money."
+        ),
+        required_roles=(
+            StakeholderRole.PRODUCT_OWNER,
+            StakeholderRole.COMPLIANCE,
+            StakeholderRole.SECURITY,
+        ),
+    ),
     "sdlc_selection": Gate(
         name="sdlc_selection",
         description=(
