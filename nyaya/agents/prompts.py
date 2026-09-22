@@ -130,8 +130,13 @@ def build_extraction_messages(text: str, context: ExtractionContext) -> list[tup
 
 
 REPAIR_INSTRUCTION = """\
-Your previous output contained requirements that are not testable as written. \
-Rewrite ONLY the statements listed below, keeping everything else identical.
+Some of your requirements are not testable as written. Rewrite the numbered \
+statements below.
+
+Return one entry per problem you fix, each carrying the problem's number and \
+the rewritten statement alone. Do not return the other requirements - they are \
+kept as they are. Do not restate the problem, the reason or the source inside \
+the statement.
 
 {problems}
 

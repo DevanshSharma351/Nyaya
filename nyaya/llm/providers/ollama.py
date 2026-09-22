@@ -13,6 +13,7 @@ import httpx
 from pydantic import BaseModel, ValidationError
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
+from nyaya.config import get_settings
 from nyaya.llm.base import (
     Completion,
     LLMError,
@@ -68,7 +69,17 @@ class OllamaProvider(LLMProvider):
         )
 
     def _options(self, temperature: float, max_tokens: int | None) -> dict[str, Any]:
-        options: dict[str, Any] = {"temperature": temperature}
+        options: dict[str, Any] = {
+            "temperature": temperature,
+            # Ollama defaults to a 4096-token window and silently truncates past
+            # it. Extraction does not fit: the system prompt and exemplars are
+            # around 1,300 tokens, the JSON Schema grammar another 950, a dense
+            # brief a few hundred more, and the answer for a brief with a dozen
+            # obligations runs to 1,700. A repair turn then re-sends all of that
+            # plus the first answer. At the default the repair pass had almost
+            # no room left to reply in.
+            "num_ctx": get_settings().ollama_context_tokens,
+        }
         if max_tokens is not None:
             options["num_predict"] = max_tokens
         return options

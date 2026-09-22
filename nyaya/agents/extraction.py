@@ -18,12 +18,18 @@ worth more than a missing one.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from nyaya.agents.prompts import build_extraction_messages, build_repair_message
 from nyaya.agents.quality import ears, lexicon
 from nyaya.agents.quality.quantities import unsupported_quantities
-from nyaya.agents.schemas import ExtractedRequirement, ExtractionContext, ExtractionOutput
+from nyaya.agents.schemas import (
+    ExtractedRequirement,
+    ExtractionContext,
+    ExtractionOutput,
+    RepairOutput,
+)
 from nyaya.config import ModelRole
 from nyaya.core.enums import DefectType, Severity
 from nyaya.llm import Message, get_provider
@@ -198,29 +204,70 @@ async def extract(
     completion = await provider.complete_structured(messages, ExtractionOutput)
     output = completion.value
 
-    analysed = [_analyse(r, text) for r in output.requirements]
+    requirements = list(output.requirements)
+    unclear = list(output.unclear)
+    analysed = [_analyse(r, text) for r in requirements]
     rounds = 0
 
     if repair:
         for _ in range(MAX_REPAIR_ATTEMPTS):
-            problems = _problem_list(analysed)
+            # `flagged` keeps the position of each problem, so a returned
+            # rewrite can be matched back to the requirement it belongs to.
+            problems, flagged = _problem_list(analysed)
             if not problems:
                 break
             rounds += 1
-            messages = [
+
+            repair_messages = [
                 *messages,
                 Message(role="assistant", content=completion.completion.text),
                 Message(role="user", content=build_repair_message(problems)),
             ]
-            completion = await provider.complete_structured(messages, ExtractionOutput)
-            output = completion.value
-            analysed = [_analyse(r, text) for r in output.requirements]
+            repair_completion = await provider.complete_structured(
+                repair_messages, RepairOutput
+            )
+
+            # Splice, never replace.
+            #
+            # This step used to hand back a whole ExtractionOutput and overwrite
+            # the previous one. The instruction says "rewrite only the statements
+            # listed below", so a model that followed it returned only those -
+            # and a thirteen-requirement extraction silently became two. The
+            # repair schema can no longer express a set, and the merge below only
+            # ever rewrites a statement in place.
+            applied = 0
+            for fix in repair_completion.value.repairs:
+                position = fix.index - 1
+                if not 0 <= position < len(flagged):
+                    continue
+                target = flagged[position]
+                cleaned = _clean_repair(
+                    fix.statement, requirements[target].statement
+                )
+                if cleaned is None:
+                    continue
+                requirements[target] = requirements[target].model_copy(
+                    update={"statement": cleaned}
+                )
+                applied += 1
+
+            unclear.extend(
+                question
+                for question in repair_completion.value.unclear
+                if question not in unclear
+            )
+
+            if not applied:
+                # Nothing changed, so another identical round would not either.
+                break
+
+            analysed = [_analyse(r, text) for r in requirements]
             for item in analysed:
                 item.repair_attempts = rounds
 
     return ExtractionResult(
         requirements=analysed,
-        unclear=output.unclear,
+        unclear=unclear,
         model=f"{provider.name}:{provider.model}",
         repair_rounds=rounds,
     )
@@ -235,10 +282,55 @@ def _analyse(requirement: ExtractedRequirement, source_text: str) -> AnalysedReq
     return AnalysedRequirement(requirement=requirement, defects=defects, ears_pattern=pattern)
 
 
-def _problem_list(analysed: list[AnalysedRequirement]) -> list[str]:
-    """Render blocking defects as repair instructions, one per statement."""
+# A requirement is one sentence containing exactly one "shall". Repairs that
+# run past that are the model narrating its own fix - "... The quoted source for
+# this requirement is: ..." - appended to an otherwise correct statement.
+_SENTENCE = re.compile(r"^(.*?[.!?])(?:\s|$)", re.DOTALL)
+_META = re.compile(
+    r"\b(quoted source|unclear|assumption|rationale|this requirement is|"
+    r"the reason|problem \d)\b",
+    re.IGNORECASE,
+)
+
+
+def _clean_repair(statement: str, original: str) -> str | None:
+    """Trim a repaired statement to the obligation, or reject it.
+
+    The repair prompt asks for the statement alone and mostly gets it, but a
+    model that has just been told *why* a sentence was wrong has a strong pull
+    towards explaining itself inside the answer. Instruction alone did not stop
+    it, so this is the deterministic half: keep the first sentence, and if what
+    remains is not a requirement, keep the original.
+
+    Rejecting is safe. The original statement is still flagged and still shown
+    to a reviewer with its defect attached; a mangled statement that *looks*
+    repaired is the worse outcome, because the defect is gone from the record
+    while the problem is not.
+    """
+    candidate = statement.strip()
+
+    match = _SENTENCE.match(candidate)
+    if match:
+        candidate = match.group(1).strip()
+
+    if _META.search(candidate) or "shall" not in candidate.lower():
+        return None
+    # A repair that changed nothing is not a repair.
+    return candidate if candidate != original.strip() else None
+
+
+def _problem_list(
+    analysed: list[AnalysedRequirement],
+) -> tuple[list[str], list[int]]:
+    """Blocking defects as repair instructions, with the position of each.
+
+    The positions are what make the repair splice-able: problem *n* in the
+    rendered list belongs to requirement `flagged[n - 1]`, so a rewrite can be
+    put back exactly where it came from instead of replacing the whole set.
+    """
     problems: list[str] = []
-    for item in analysed:
+    flagged: list[int] = []
+    for position, item in enumerate(analysed):
         blocking_defects = [
             d for d in item.defects if d.severity in {Severity.MAJOR, Severity.BLOCKER}
         ]
@@ -246,7 +338,8 @@ def _problem_list(analysed: list[AnalysedRequirement]) -> list[str]:
             continue
         details = "; ".join(d.detail for d in blocking_defects)
         problems.append(f'Statement "{item.requirement.statement}" — {details}')
-    return problems
+        flagged.append(position)
+    return problems, flagged
 
 
 def new_ref(domain: str, index: int) -> str:

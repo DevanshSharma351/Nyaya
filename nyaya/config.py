@@ -118,6 +118,15 @@ class Settings(BaseSettings):
     groq_api_key: str = ""
     anthropic_api_key: str = ""
     ollama_base_url: str = "http://localhost:11434"
+    ollama_context_tokens: int = Field(
+        default=16384,
+        alias="NYAYA_OLLAMA_CONTEXT_TOKENS",
+        description=(
+            "Context window requested from Ollama. Its own default is 4096, "
+            "which extraction overflows - prompt, schema grammar, brief, answer "
+            "and then a repair turn carrying all of it again."
+        ),
+    )
 
     # --- retrieval ---
     retrieval_top_k: int = Field(default=40, alias="NYAYA_RETRIEVAL_TOP_K")

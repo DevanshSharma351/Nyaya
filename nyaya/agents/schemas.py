@@ -69,6 +69,53 @@ class ExtractedRequirement(BaseModel):
     )
 
 
+class RepairedStatement(BaseModel):
+    """One rewritten statement, keyed to the requirement it replaces."""
+
+    index: int = Field(
+        ge=1,
+        description=(
+            "The number of the problem being fixed, exactly as listed in the "
+            "instruction. This is how the rewrite is matched back to the "
+            "requirement it belongs to."
+        ),
+    )
+    statement: str = Field(
+        min_length=1,
+        description=(
+            "The rewritten requirement, in EARS form, with exactly one 'shall'. "
+            "Only the statement - do not restate the problem, the reason, or the "
+            "source."
+        ),
+    )
+
+
+class RepairOutput(BaseModel):
+    """The result of a repair pass.
+
+    Deliberately *not* the full extraction. An earlier version asked the model
+    to return the whole requirement set with the flagged statements rewritten,
+    and then replaced the previous set with whatever came back - so when the
+    model followed the instruction to "rewrite only the statements listed
+    below" and returned only those, thirteen requirements silently became two.
+    The set can no longer shrink because the repair pass has no way to express
+    a set at all.
+    """
+
+    repairs: list[RepairedStatement] = Field(
+        default_factory=list,
+        description="One entry per numbered problem. Omit any you cannot fix.",
+    )
+    unclear: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Questions raised while repairing - typically the value that would "
+            "have been needed to make a vague statement precise. Added to the "
+            "existing list rather than replacing it."
+        ),
+    )
+
+
 class ExtractionOutput(BaseModel):
     """The full result of extracting from one input."""
 
@@ -110,4 +157,6 @@ __all__ = [
     "ExtractedRequirement",
     "ExtractionContext",
     "ExtractionOutput",
+    "RepairOutput",
+    "RepairedStatement",
 ]
