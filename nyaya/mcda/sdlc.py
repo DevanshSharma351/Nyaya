@@ -147,6 +147,120 @@ PROFILES: dict[SDLCModel, dict[str, float]] = {
         "schedule_pressure": 0.80,
         "team_experience": 0.80,
     },
+    # --- added because "such as" is an example list, not a closed one -------
+    #
+    # Each of these is a distinct answer to "how should this be built", with a
+    # profile that differs from its neighbours on factors that matter. Where two
+    # would have been near-identical, only one is here.
+    SDLCModel.INCREMENTAL: {
+        # Deliver in planned slices against a stable overall scope. The usual
+        # shape of a core-banking migration: the destination is known, the route
+        # is staged, and each stage must be provably complete.
+        "requirement_stability": 0.80,
+        "regulatory_criticality": 0.70,
+        "security_risk": 0.60,
+        "project_complexity": 0.70,
+        "legacy_dependence": 0.80,
+        "change_frequency": 0.35,
+        "continuous_delivery_need": 0.45,
+        "stakeholder_availability": 0.50,
+        "documentation_need": 0.70,
+        "formal_verification_need": 0.55,
+        "failure_consequence": 0.70,
+        "schedule_pressure": 0.55,
+        "team_experience": 0.55,
+    },
+    SDLCModel.ITERATIVE: {
+        # Refine the same system repeatedly rather than extend it in slices.
+        # Fits work where the requirement is understood but the right solution
+        # is not - a fraud model, a risk-scoring engine.
+        "requirement_stability": 0.45,
+        "regulatory_criticality": 0.55,
+        "security_risk": 0.55,
+        "project_complexity": 0.75,
+        "legacy_dependence": 0.50,
+        "change_frequency": 0.65,
+        "continuous_delivery_need": 0.45,
+        "stakeholder_availability": 0.60,
+        "documentation_need": 0.50,
+        "formal_verification_need": 0.45,
+        "failure_consequence": 0.55,
+        "schedule_pressure": 0.45,
+        "team_experience": 0.55,
+    },
+    SDLCModel.PROTOTYPING: {
+        # Build to learn what is wanted. Only defensible where failure is cheap:
+        # a prototype-led approach to a payments switch would be negligent, and
+        # the low failure-consequence and regulatory scores say so.
+        "requirement_stability": 0.15,
+        "regulatory_criticality": 0.30,
+        "security_risk": 0.30,
+        "project_complexity": 0.45,
+        "legacy_dependence": 0.30,
+        "change_frequency": 0.85,
+        "continuous_delivery_need": 0.40,
+        "stakeholder_availability": 0.90,
+        "documentation_need": 0.25,
+        "formal_verification_need": 0.15,
+        "failure_consequence": 0.20,
+        "schedule_pressure": 0.60,
+        "team_experience": 0.45,
+    },
+    SDLCModel.RAD: {
+        # Small expert team, heavy stakeholder involvement, short calendar.
+        # Distinguished from prototyping by producing a real system, and from
+        # agile by depending on component reuse and an experienced team.
+        "requirement_stability": 0.35,
+        "regulatory_criticality": 0.35,
+        "security_risk": 0.35,
+        "project_complexity": 0.35,
+        "legacy_dependence": 0.35,
+        "change_frequency": 0.75,
+        "continuous_delivery_need": 0.55,
+        "stakeholder_availability": 0.95,
+        "documentation_need": 0.25,
+        "formal_verification_need": 0.20,
+        "failure_consequence": 0.30,
+        "schedule_pressure": 0.90,
+        "team_experience": 0.80,
+    },
+    SDLCModel.SCALED_AGILE: {
+        # Agile across many teams with a coordinating cadence. The distinguishing
+        # factors are complexity and size rather than anything about the
+        # engineering: a single team does not need this and pays for it.
+        "requirement_stability": 0.45,
+        "regulatory_criticality": 0.75,
+        "security_risk": 0.70,
+        "project_complexity": 0.95,
+        "legacy_dependence": 0.70,
+        "change_frequency": 0.70,
+        "continuous_delivery_need": 0.70,
+        "stakeholder_availability": 0.60,
+        "documentation_need": 0.65,
+        "formal_verification_need": 0.50,
+        "failure_consequence": 0.75,
+        "schedule_pressure": 0.55,
+        "team_experience": 0.65,
+    },
+    SDLCModel.KANBAN: {
+        # Continuous flow with work-in-progress limits and no fixed iteration.
+        # The right answer for run-and-maintain and for regulatory-reporting
+        # teams, whose work arrives rather than being planned - which is why
+        # requirement stability is low but change frequency is not extreme.
+        "requirement_stability": 0.40,
+        "regulatory_criticality": 0.60,
+        "security_risk": 0.55,
+        "project_complexity": 0.40,
+        "legacy_dependence": 0.65,
+        "change_frequency": 0.80,
+        "continuous_delivery_need": 0.85,
+        "stakeholder_availability": 0.55,
+        "documentation_need": 0.40,
+        "formal_verification_need": 0.30,
+        "failure_consequence": 0.50,
+        "schedule_pressure": 0.50,
+        "team_experience": 0.60,
+    },
     SDLCModel.AGILE_VMODEL_HYBRID: {
         "requirement_stability": 0.55,
         "regulatory_criticality": 0.90,

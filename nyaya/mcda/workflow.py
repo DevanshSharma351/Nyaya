@@ -234,6 +234,30 @@ CADENCE: dict[SDLCModel, str] = {
         "Agile iterations on a continuously verified pipeline, with compliance "
         "gates automated where they can be and manual where they cannot."
     ),
+    SDLCModel.INCREMENTAL: (
+        "Planned slices against a stable overall scope. Each increment is a "
+        "complete, releasable piece of the agreed whole."
+    ),
+    SDLCModel.ITERATIVE: (
+        "The same system refined repeatedly. Each pass improves what exists "
+        "rather than extending the scope."
+    ),
+    SDLCModel.PROTOTYPING: (
+        "Build to learn. Prototypes answer a question about what is wanted and "
+        "are then discarded or hardened deliberately, never by default."
+    ),
+    SDLCModel.RAD: (
+        "Short cycles with the stakeholder in the room and heavy reuse of "
+        "existing components."
+    ),
+    SDLCModel.SCALED_AGILE: (
+        "Team-level iterations synchronised on a longer planning cadence, with "
+        "cross-team dependencies resolved before the increment starts."
+    ),
+    SDLCModel.KANBAN: (
+        "Continuous flow with limited work in progress. Work is pulled as "
+        "capacity frees rather than committed to a fixed iteration."
+    ),
 }
 
 ITERATIVE = {
@@ -242,6 +266,12 @@ ITERATIVE = {
     SDLCModel.DEVSECOPS,
     SDLCModel.AGILE_VMODEL_HYBRID,
     SDLCModel.AGILE_DEVSECOPS_HYBRID,
+    SDLCModel.INCREMENTAL,
+    SDLCModel.ITERATIVE,
+    SDLCModel.PROTOTYPING,
+    SDLCModel.RAD,
+    SDLCModel.SCALED_AGILE,
+    SDLCModel.KANBAN,
 }
 
 # Activities a specific lifecycle adds because the lifecycle itself requires
@@ -273,6 +303,65 @@ MODEL_ACTIVITIES: dict[SDLCModel, list[tuple[str, Activity]]] = {
     ],
     SDLCModel.WATERFALL: [
         ("Requirements and compliance analysis", Activity("Freeze and formally sign off the baseline", PM)),
+    ],
+    SDLCModel.INCREMENTAL: [
+        (
+            "Requirements and compliance analysis",
+            Activity("Allocate requirements to increments and fix the order", PM),
+        ),
+        (
+            "Release and operation",
+            Activity("Confirm the increment is independently releasable", QA),
+        ),
+    ],
+    SDLCModel.ITERATIVE: [
+        (
+            "Verification",
+            Activity("Compare against the previous pass and record what improved", QA),
+        ),
+    ],
+    SDLCModel.PROTOTYPING: [
+        (
+            "Requirements and compliance analysis",
+            Activity("State the question each prototype is built to answer", BA),
+        ),
+        (
+            "Implementation",
+            # The decision that separates a prototype-led project from an
+            # accident: prototype code reaching production unexamined is how
+            # unreviewed work ends up handling customer money.
+            Activity("Decide explicitly whether to discard or harden the prototype", ARCHITECT),
+        ),
+    ],
+    SDLCModel.RAD: [
+        (
+            "Architecture and security design",
+            Activity("Identify reusable components and assess their provenance", ARCHITECT, security=True),
+        ),
+        (
+            "Implementation",
+            Activity("Build with the stakeholder available for same-day decisions", BA),
+        ),
+    ],
+    SDLCModel.SCALED_AGILE: [
+        (
+            "Requirements and compliance analysis",
+            Activity("Resolve cross-team dependencies before the increment starts", PM),
+        ),
+        (
+            "Verification",
+            Activity("Integrate and test across teams, not only within them", QA),
+        ),
+    ],
+    SDLCModel.KANBAN: [
+        (
+            "Implementation",
+            Activity("Limit work in progress and pull as capacity frees", PM),
+        ),
+        (
+            "Release and operation",
+            Activity("Release continuously as items complete", OPS),
+        ),
     ],
 }
 

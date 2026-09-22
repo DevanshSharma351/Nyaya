@@ -108,12 +108,31 @@ class StakeholderRole(StrEnum):
 
 
 class SDLCModel(StrEnum):
-    """Candidate lifecycle models the selection engine ranks."""
+    """Candidate lifecycle models the selection engine ranks.
+
+    The brief names Agile, DevSecOps, Spiral, V-Model, Waterfall "or a hybrid
+    model" - and "such as", which is an example list rather than a closed one.
+    Ranking only the five named ones makes the engine unable to recommend a
+    lifecycle that is genuinely the right answer for some financial projects:
+    incremental delivery for a phased core-banking migration, prototyping where
+    the requirement is not yet understood, Kanban for a run-and-maintain team
+    whose work arrives rather than being planned.
+
+    A candidate belongs here only if it is a distinct answer to "how should this
+    be built" with its own profile across the thirteen factors. Variants that
+    differ only in ceremony are not separate models.
+    """
 
     WATERFALL = "waterfall"
     V_MODEL = "v_model"
+    INCREMENTAL = "incremental"
+    ITERATIVE = "iterative"
+    PROTOTYPING = "prototyping"
+    RAD = "rad"
     SPIRAL = "spiral"
     AGILE = "agile"
+    SCALED_AGILE = "scaled_agile"
+    KANBAN = "kanban"
     DEVSECOPS = "devsecops"
     AGILE_VMODEL_HYBRID = "agile_vmodel_hybrid"
     AGILE_DEVSECOPS_HYBRID = "agile_devsecops_hybrid"
