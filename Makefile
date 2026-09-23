@@ -1,4 +1,4 @@
-.PHONY: help setup hooks up down db-reset corpus seed doctor test lint fmt scan check
+.PHONY: help setup hooks up down db-reset corpus seed doctor test lint fmt scan check api web
 
 help:
 	@grep -E '^[a-z-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n",$$1,$$2}'

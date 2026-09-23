@@ -10,6 +10,28 @@
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api";
 
 /**
+ * How long a single request may take before the client gives up.
+ *
+ * Extraction runs an 8B model locally and legitimately takes two to three
+ * minutes on a long brief, so this is generous. It exists because the
+ * alternative is unbounded: a request with no deadline leaves a spinner turning
+ * forever with nothing to tell the reader, which is exactly how a slow model
+ * becomes indistinguishable from a broken one.
+ *
+ * Longer than the server's own model timeout, so a slow generation surfaces as
+ * the server's explanation rather than as a bare client abort.
+ */
+const TIMEOUT_MS = 300_000;
+
+/** The request was abandoned before the server answered. */
+export class ApiTimeoutError extends Error {
+  constructor() {
+    super("The request took too long and was abandoned");
+    this.name = "ApiTimeoutError";
+  }
+}
+
+/**
  * The API could not be reached at all.
  *
  * Distinguished from every other failure because it is the only one the reader
@@ -28,17 +50,25 @@ export class ApiUnreachableError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+
   let response: Response;
   try {
     response = await fetch(`${BASE}${path}`, {
       ...init,
       headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
       cache: "no-store",
+      signal: controller.signal,
     });
-  } catch {
-    // `fetch` rejects only on network-level failure; anything the server
-    // answered - including a 500 - resolves and is handled below.
+  } catch (error) {
+    // `fetch` rejects on network-level failure and on abort. The two need
+    // different messages: one means start the backend, the other means the
+    // backend is there and thinking.
+    if ((error as Error).name === "AbortError") throw new ApiTimeoutError();
     throw new ApiUnreachableError();
+  } finally {
+    clearTimeout(timer);
   }
   if (!response.ok) {
     const detail = await response.text().catch(() => response.statusText);
@@ -100,6 +130,8 @@ export type ExtractedRequirement = {
 export type ExtractResult = {
   model: string;
   repair_rounds: number;
+  /** What the run could not do. Empty on a clean run. */
+  notes: string[];
   testable_fraction: number;
   unclear: string[];
   requirements: ExtractedRequirement[];

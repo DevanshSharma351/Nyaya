@@ -18,10 +18,11 @@ worth more than a missing one.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 
-from nyaya.agents.prompts import build_extraction_messages, build_repair_message
+from nyaya.agents.prompts import build_extraction_messages, build_repair_messages
 from nyaya.agents.quality import consistency, ears, lexicon
 from nyaya.agents.quality.quantities import unsupported_quantities
 from nyaya.agents.schemas import (
@@ -33,6 +34,8 @@ from nyaya.agents.schemas import (
 from nyaya.config import ModelRole
 from nyaya.core.enums import DefectType, Severity
 from nyaya.llm import Message, get_provider
+
+logger = logging.getLogger(__name__)
 
 MAX_REPAIR_ATTEMPTS = 2
 
@@ -69,6 +72,14 @@ class ExtractionResult:
     unclear: list[str] = field(default_factory=list)
     model: str = ""
     repair_rounds: int = 0
+
+    notes: list[str] = field(default_factory=list)
+    """What the run could not do, stated rather than hidden.
+
+    A degraded result and a clean one must not be indistinguishable. If the
+    repair pass was skipped, the requirements below still carry defects nobody
+    tried to fix, and a reviewer needs to know that before reading them.
+    """
 
     @property
     def testable_fraction(self) -> float:
@@ -208,6 +219,7 @@ async def extract(
     unclear = list(output.unclear)
     analysed = [_analyse(r, text) for r in requirements]
     rounds = 0
+    notes: list[str] = []
 
     if repair:
         for _ in range(MAX_REPAIR_ATTEMPTS):
@@ -218,14 +230,40 @@ async def extract(
                 break
             rounds += 1
 
+            # A fresh, self-contained request rather than a continuation. See
+            # `build_repair_messages`: re-sending the whole conversation made
+            # the second pass cost more than the first, and did so precisely
+            # when the answer was longest and most in need of repair.
             repair_messages = [
-                *messages,
-                Message(role="assistant", content=completion.completion.text),
-                Message(role="user", content=build_repair_message(problems)),
+                Message(role=role_name, content=content)
+                for role_name, content in build_repair_messages(problems)
             ]
-            repair_completion = await provider.complete_structured(
-                repair_messages, RepairOutput
-            )
+
+            try:
+                repair_completion = await provider.complete_structured(
+                    repair_messages, RepairOutput
+                )
+            except Exception as exc:
+                # Repair is an enhancement, not a dependency.
+                #
+                # A timeout here used to fail the entire request with a 500,
+                # discarding a complete first-pass extraction because the
+                # optional second pass was slow. The requirements are still
+                # correct; they simply still carry the defects the linters
+                # found, which is exactly what a reviewer is shown anyway.
+                logger.warning(
+                    "repair pass failed (%s: %s); returning the unrepaired "
+                    "extraction with its defects intact",
+                    type(exc).__name__,
+                    exc,
+                )
+                notes.append(
+                    f"Repair was skipped after {type(exc).__name__}. The "
+                    "requirements below are as first extracted, and the defects "
+                    "on them have not been addressed."
+                )
+                rounds -= 1
+                break
 
             # Splice, never replace.
             #
@@ -274,6 +312,7 @@ async def extract(
         unclear=unclear,
         model=f"{provider.name}:{provider.model}",
         repair_rounds=rounds,
+        notes=notes,
     )
 
 

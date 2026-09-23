@@ -118,13 +118,24 @@ class Settings(BaseSettings):
     groq_api_key: str = ""
     anthropic_api_key: str = ""
     ollama_base_url: str = "http://localhost:11434"
+    ollama_timeout_seconds: float = Field(
+        default=240.0,
+        alias="NYAYA_OLLAMA_TIMEOUT_SECONDS",
+        description=(
+            "How long to wait for one generation. Sized below a typical "
+            "browser or proxy timeout so a slow model surfaces as a handled "
+            "error rather than a connection the client gives up on first."
+        ),
+    )
     ollama_context_tokens: int = Field(
-        default=16384,
+        default=8192,
         alias="NYAYA_OLLAMA_CONTEXT_TOKENS",
         description=(
-            "Context window requested from Ollama. Its own default is 4096, "
-            "which extraction overflows - prompt, schema grammar, brief, answer "
-            "and then a repair turn carrying all of it again."
+            "Context window requested from Ollama. Its own default of 4096 is "
+            "too small - the extraction prompt, the schema grammar and a long "
+            "answer do not fit, and it truncates silently. 8192 holds all of "
+            "them; larger only grows the KV cache, which on a shared GPU costs "
+            "throughput for context nothing uses."
         ),
     )
 

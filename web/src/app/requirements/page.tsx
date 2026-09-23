@@ -135,6 +135,20 @@ export default function RequirementsPage() {
 
         {result && !busy && (
           <>
+            {/* A degraded run must not look like a clean one. */}
+            {result.notes?.length > 0 && (
+              <div
+                className="glass mb-5 p-4"
+                style={{ borderLeft: "2px solid var(--review)" }}
+              >
+                {result.notes.map((note) => (
+                  <p key={note} className="caption m-0">
+                    {note}
+                  </p>
+                ))}
+              </div>
+            )}
+
             <div className="mb-5 flex flex-wrap gap-2">
               <Badge tone="var(--accent)">{result.model}</Badge>
               <Badge

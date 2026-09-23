@@ -151,12 +151,38 @@ built.
 """
 
 
-def build_repair_message(problems: list[str]) -> str:
-    """Feedback for a retry, derived from the deterministic linters.
+REPAIR_SYSTEM = """\
+You are a requirements analyst. You rewrite individual requirement statements \
+into EARS form with exactly one "shall", and you do nothing else.
+"""
 
-    The linters produce specific, checkable defects, so the retry prompt names
-    the offending term and the remedy rather than asking the model to be clearer.
+
+def build_repair_messages(problems: list[str]) -> list[tuple[str, str]]:
+    """A self-contained repair request.
+
+    Deliberately *not* a continuation of the extraction conversation. It used to
+    be: the whole exchange was re-sent - system prompt, both exemplars with
+    their JSON, the full first answer - and only then the list of statements to
+    fix. On a long brief that put two thousand tokens of context in front of a
+    request whose entire subject is a handful of sentences, and the second pass
+    ended up costing more than the first.
+
+    It also made the repair slower exactly when it was most likely to be needed,
+    because the answer that has the most defects is the longest one.
+
+    The linters have already said precisely what is wrong with each statement,
+    so nothing from the original conversation is load-bearing here. The
+    statements carry their own problems with them.
     """
+    numbered = "\n".join(f"{i}. {p}" for i, p in enumerate(problems, start=1))
+    return [
+        ("system", REPAIR_SYSTEM),
+        ("user", REPAIR_INSTRUCTION.format(problems=numbered)),
+    ]
+
+
+def build_repair_message(problems: list[str]) -> str:
+    """The repair instruction alone, without the surrounding turns."""
     numbered = "\n".join(f"{i}. {p}" for i, p in enumerate(problems, start=1))
     return REPAIR_INSTRUCTION.format(problems=numbered)
 
@@ -166,4 +192,5 @@ __all__ = [
     "REPAIR_INSTRUCTION",
     "build_extraction_messages",
     "build_repair_message",
+    "build_repair_messages",
 ]

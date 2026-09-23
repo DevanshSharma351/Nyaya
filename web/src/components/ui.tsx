@@ -244,19 +244,35 @@ export function Failure({ message }: { message: string }) {
   const unreachable = /failed to fetch|could not reach the api|networkerror|load failed/i.test(
     message,
   );
+  // A slow local model and a stopped backend look identical from a spinner,
+  // and the remedies share nothing.
+  const timedOut = /took too long|timed out|model_timeout|504/i.test(message);
 
   return (
     <div
       className="body"
       style={{
-        color: unreachable ? "var(--text)" : "var(--gap)",
-        border: `1px solid ${tint(unreachable ? "var(--review)" : "var(--gap)", 30)}`,
-        background: tint(unreachable ? "var(--review)" : "var(--gap)", 5),
+        color: unreachable || timedOut ? "var(--text)" : "var(--gap)",
+        border: `1px solid ${tint(unreachable || timedOut ? "var(--review)" : "var(--gap)", 30)}`,
+        background: tint(unreachable || timedOut ? "var(--review)" : "var(--gap)", 5),
         borderRadius: 12,
         padding: "14px 16px",
       }}
     >
-      {unreachable ? (
+      {timedOut ? (
+        <>
+          <div style={{ fontWeight: 550 }}>The model ran out of time.</div>
+          <p className="caption mt-1.5 mb-0" style={{ maxWidth: 560 }}>
+            Nothing is broken. Extraction runs an 8B model on this machine, and a
+            long brief makes it slower — a few hundred words can take two to
+            three minutes. Try a shorter brief, or raise{" "}
+            <span className="mono" style={{ color: "var(--text)" }}>
+              NYAYA_OLLAMA_TIMEOUT_SECONDS
+            </span>{" "}
+            and run it again.
+          </p>
+        </>
+      ) : unreachable ? (
         <>
           <div style={{ fontWeight: 550 }}>The API is not responding.</div>
           <p className="caption mt-1.5 mb-0" style={{ maxWidth: 560 }}>

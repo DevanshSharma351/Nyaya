@@ -21,6 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from nyaya.core.enums import RiskLevel
+from nyaya.mcda import signals
 from nyaya.mcda.sdlc import default_factors
 
 ELEVATED = {RiskLevel.HIGH, RiskLevel.CRITICAL}
@@ -45,13 +46,30 @@ class Derivation:
     observations: list[str]
 
 
-def factors_from_requirements(requirements: list, unclear: list[str]) -> dict[str, float]:
+def factors_from_requirements(
+    requirements: list, unclear: list[str], brief: str | None = None
+) -> dict[str, float]:
     """Factor vector only. Kept for callers that do not need the explanation."""
-    return derive(requirements, unclear).factors
+    return derive(requirements, unclear, brief).factors
 
 
-def derive(requirements: list, unclear: list[str]) -> Derivation:
-    """Derive the factor vector and say, in words, where each number came from."""
+def derive(
+    requirements: list, unclear: list[str], brief: str | None = None
+) -> Derivation:
+    """Derive the factor vector and say, in words, where each number came from.
+
+    Two sources, in order of authority. The requirements give what was actually
+    extracted - how much is regulatory, how much is high risk, how settled it
+    is. The brief, when supplied, gives the project characteristics section 13
+    of the problem statement asks for: the deadline, the team, stakeholder
+    availability, how the work decomposes. Neither alone is enough, and the
+    second was missing entirely.
+
+    A characteristic the brief states outright wins over a value inferred from
+    requirement categories, and over a floor. The floors exist to stop an
+    incomplete brief arguing for lighter process; a brief that says plainly
+    that the team is expert and the deadline is fixed is not incomplete.
+    """
     total = max(len(requirements), 1)
 
     regulatory = (
@@ -108,6 +126,28 @@ def derive(requirements: list, unclear: list[str]) -> Derivation:
         f"putting requirement stability at {1.0 - unsettled:.2f} and change "
         f"frequency at {unsettled:.2f}.",
     ]
+
+    if brief:
+        stated = signals.read(brief)
+        for signal in stated:
+            factors[signal.factor] = signal.value
+            quoted = "; ".join(f"\u201c{p}\u201d" for p in signal.phrases)
+            if signal.contested:
+                observations.append(
+                    f"{signal.factor.replace('_', ' ').capitalize()} set to "
+                    f"{signal.value:.2f}, between conflicting statements in the "
+                    f"brief: {' and '.join(signal.reasons)} ({quoted})."
+                )
+            else:
+                observations.append(
+                    f"{signal.factor.replace('_', ' ').capitalize()} set to "
+                    f"{signal.value:.2f} because {signal.reasons[0]} ({quoted})."
+                )
+        if not stated:
+            observations.append(
+                "The brief states no project characteristic the engine "
+                "recognises, so the factors come from the requirements alone."
+            )
 
     return Derivation(factors=factors, observations=observations)
 

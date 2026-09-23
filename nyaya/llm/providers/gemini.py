@@ -33,7 +33,10 @@ class GeminiProvider(LLMProvider):
         from google import genai  # imported lazily so the dep stays optional
 
         self._genai = genai
-        self._client = genai.Client(api_key=api_key)
+        self._client = genai.Client(
+            api_key=api_key,
+            http_options={"timeout": 600000}
+        )
 
     @staticmethod
     def _split(messages: list[Message]) -> tuple[str | None, list[dict[str, Any]]]:

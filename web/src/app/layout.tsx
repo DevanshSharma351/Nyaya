@@ -27,7 +27,7 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en">
+    <html lang="en" data-scroll-behavior="smooth">
       {/*
         Browser extensions write attributes onto <body> before React hydrates -
         Grammarly adds `data-gr-ext-installed` and `data-new-gr-c-s-check-loaded`,

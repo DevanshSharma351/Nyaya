@@ -33,7 +33,12 @@ class OllamaProvider(LLMProvider):
     def __init__(self, model: str, base_url: str = "http://localhost:11434") -> None:
         super().__init__(model)
         self.base_url = base_url.rstrip("/")
-        self._client = httpx.AsyncClient(base_url=self.base_url, timeout=300.0)
+        # A generation that has not answered within the budget is not going to
+        # be useful: the caller is a browser, and something upstream will give
+        # up long before a local model finishes a runaway response.
+        self._client = httpx.AsyncClient(
+            base_url=self.base_url, timeout=get_settings().ollama_timeout_seconds
+        )
 
     async def aclose(self) -> None:
         await self._client.aclose()

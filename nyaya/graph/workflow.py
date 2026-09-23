@@ -222,8 +222,13 @@ def node_sdlc_gate(state: WorkflowState) -> dict[str, Any]:
 
 def _derive_factors(state: WorkflowState) -> dict[str, float]:
     """Derive SDLC decision factors from what this run actually found."""
+    # The workflow state is loosely typed, so the brief is narrowed here rather
+    # than trusted: a non-string would otherwise reach the phrase matcher.
+    raw = state.get("raw_text")
     return factors_from_requirements(
-        state.get("requirements", []), state.get("unclear", [])
+        state.get("requirements", []),
+        state.get("unclear", []),
+        raw if isinstance(raw, str) else None,
     )
 
 

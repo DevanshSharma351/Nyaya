@@ -74,6 +74,7 @@ async def extract_requirements(payload: ExtractIn):
     return {
         "model": result.model,
         "repair_rounds": result.repair_rounds,
+        "notes": result.notes,
         "testable_fraction": result.testable_fraction,
         "unclear": result.unclear,
         "requirements": [
@@ -195,7 +196,7 @@ async def recommend_sdlc_from_brief(payload: BriefIn):
             domain=payload.domain, jurisdictions=payload.jurisdictions
         ),
     )
-    derivation = derive(result.requirements, result.unclear)
+    derivation = derive(result.requirements, result.unclear, brief=payload.text)
     ranking = recommend(derivation.factors)
     critical = sum(
         1

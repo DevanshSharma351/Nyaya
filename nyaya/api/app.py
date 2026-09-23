@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+import httpx
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy import func, select, text
 
 from nyaya.api.routers import analysis, graph, knowledge, projects
@@ -14,6 +17,8 @@ from nyaya.config import ModelRole, get_settings
 from nyaya.db import get_engine, get_sessionmaker
 from nyaya.db.models import Clause, SourceDocument
 from nyaya.llm import aclose_all, get_provider
+
+logger = logging.getLogger(__name__)
 
 DESCRIPTION = """\
 Agentic requirements engineering, compliance mapping and SDLC selection for
@@ -51,6 +56,31 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.exception_handler(httpx.TimeoutException)
+    async def _model_timeout(_request: Request, exc: httpx.TimeoutException):
+        """A slow local model is a condition, not a crash.
+
+        It reached the client as a 500 with a traceback, which tells a reader
+        that the application is broken when what actually happened is that an
+        8B model on a laptop did not finish in time. The distinction matters
+        because the remedies are completely different, and only one of them is
+        available to the person reading it.
+        """
+        logger.warning("model timed out: %s", exc)
+        return JSONResponse(
+            status_code=504,
+            content={
+                "detail": (
+                    "The local model did not respond within "
+                    f"{get_settings().ollama_timeout_seconds:.0f} seconds. "
+                    "Nothing is broken - extraction on an 8B model is slow, and "
+                    "a long brief makes it slower. Try a shorter brief, or set "
+                    "NYAYA_OLLAMA_TIMEOUT_SECONDS higher and retry."
+                ),
+                "kind": "model_timeout",
+            },
+        )
 
     for router in (projects.router, knowledge.router, analysis.router, graph.router):
         app.include_router(router, prefix="/api")
