@@ -62,23 +62,36 @@ async def persist_run(
 
     for index, item in enumerate(state.get("requirements", []), start=1):
         ref = new_ref(state.get("domain", "ekyc_onboarding"), index)
-        row = Requirement(
-            project_id=project_id,
-            ref=ref,
-            statement=item.requirement.statement,
-            categories=[c.value for c in item.requirement.categories],
-            priority=item.requirement.priority,
-            risk_level=item.requirement.risk_level,
-            business_justification=item.requirement.rationale,
-            acceptance_criteria=list(item.requirement.acceptance_criteria),
-            assumptions=list(item.requirement.assumptions),
-            source_utterance_id=utterance_id,
-            source_stakeholder_id=stakeholder_id,
-            approval_status=status,
-            generated_by="extraction_agent",
-        )
-        session.add(row)
-        await session.flush()
+        existing = (
+            await session.execute(
+                select(Requirement).where(
+                    Requirement.project_id == project_id,
+                    Requirement.ref == ref,
+                    Requirement.version == 1,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            existing.approval_status = status
+            row = existing
+        else:
+            row = Requirement(
+                project_id=project_id,
+                ref=ref,
+                statement=item.requirement.statement,
+                categories=[c.value for c in item.requirement.categories],
+                priority=item.requirement.priority,
+                risk_level=item.requirement.risk_level,
+                business_justification=item.requirement.rationale,
+                acceptance_criteria=list(item.requirement.acceptance_criteria),
+                assumptions=list(item.requirement.assumptions),
+                source_utterance_id=utterance_id,
+                source_stakeholder_id=stakeholder_id,
+                approval_status=status,
+                generated_by="extraction_agent",
+            )
+            session.add(row)
+            await session.flush()
 
         by_statement[item.requirement.statement] = row
         result.requirement_ids.append(row.id)
@@ -170,29 +183,38 @@ async def _persist_compliance(
             )
             evidence_count += 1
 
-            session.add(
-                ControlMapping(
-                    requirement_id=requirement.id,
-                    control_id=mapping.control_id,
-                    clause_id=clause_id,
-                    jurisdiction=(state.get("jurisdictions") or ["IN"])[0],
-                    proposed_by="rule" if mapping.rule_seeded else "llm",
-                    validator_passed=mapping.status == "confirmed",
-                    validator_detail={
-                        "tier": mapping.tier.value,
-                        "status": mapping.status,
-                        "entailment": mapping.entailment_score,
-                        "relevance": mapping.relevance_score,
-                        "quote_verified": mapping.quote_verified,
-                        "rejections": mapping.rejections,
-                        "review_reasons": mapping.review_reasons,
-                        "confidence": (
-                            mapping.confidence.as_dict() if mapping.confidence else None
-                        ),
-                    },
+            existing_mapping = (
+                await session.execute(
+                    select(ControlMapping).where(
+                        ControlMapping.requirement_id == requirement.id,
+                        ControlMapping.control_id == mapping.control_id,
+                    )
                 )
-            )
-            mapping_count += 1
+            ).scalar_one_or_none()
+            if existing_mapping is None:
+                session.add(
+                    ControlMapping(
+                        requirement_id=requirement.id,
+                        control_id=mapping.control_id,
+                        clause_id=clause_id,
+                        jurisdiction=(state.get("jurisdictions") or ["IN"])[0],
+                        proposed_by="rule" if mapping.rule_seeded else "llm",
+                        validator_passed=mapping.status == "confirmed",
+                        validator_detail={
+                            "tier": mapping.tier.value,
+                            "status": mapping.status,
+                            "entailment": mapping.entailment_score,
+                            "relevance": mapping.relevance_score,
+                            "quote_verified": mapping.quote_verified,
+                            "rejections": mapping.rejections,
+                            "review_reasons": mapping.review_reasons,
+                            "confidence": (
+                                mapping.confidence.as_dict() if mapping.confidence else None
+                            ),
+                        },
+                    )
+                )
+                mapping_count += 1
 
             if clause_id is not None and mapping.relation is EvidenceRelation.SUPPORTS:
                 session.add(

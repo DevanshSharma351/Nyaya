@@ -24,7 +24,8 @@ export type IconName =
   | "shield-check"
   | "git-branch"
   | "activity"
-  | "history";
+  | "history"
+  | "workflow";
 
 export const MODULES: Module[] = [
   {
@@ -44,6 +45,12 @@ export const MODULES: Module[] = [
     icon: "list-checks",
     name: "Requirements",
     question: "What must the system do, in testable form?",
+  },
+  {
+    href: "/workflow",
+    icon: "workflow",
+    name: "Workflow",
+    question: "Which human gates require sign-off?",
   },
   {
     href: "/artefacts",

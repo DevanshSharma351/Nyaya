@@ -389,10 +389,70 @@ class ProjectUsageOut(BaseModel):
     events: list[LLMCallEventOut] = Field(default_factory=list)
 
 
+class GateDecisionIn(BaseModel):
+    gate: str
+    decision: str = "approve"  # "approve" | "reject"
+    actor: str = Field(min_length=1)
+    role: str = Field(description="StakeholderRole value, e.g. business_analyst, compliance, etc.")
+    comment: str = ""
+
+
+class ApprovalOut(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    gate: str
+    required_role: str
+    status: str
+    decided_by: str | None = None
+    decided_at: datetime | None = None
+    comment: str | None = None
+    created_at: datetime
+
+
+class GateSpecOut(BaseModel):
+    name: str
+    description: str
+    required_roles: list[str]
+    blocking: bool
+
+
+class WorkflowStartIn(BaseModel):
+    source_text: str | None = None
+    domain: str = "ekyc_onboarding"
+    jurisdictions: list[str] = Field(default_factory=lambda: ["IN"])
+    stakeholder_role: str | None = None
+
+
+class WorkflowDecisionOut(BaseModel):
+    gate: str
+    decision: str
+    actor: str
+    comment: str
+    at: str
+
+
+class WorkflowStatusOut(BaseModel):
+    project_id: uuid.UUID
+    status: str  # "idle" | "running" | "waiting_approval" | "halted" | "completed"
+    current_node: str | None = None
+    current_gate: str | None = None
+    gate_payload: dict | None = None
+    halted: bool = False
+    halt_reason: str = ""
+    decisions: list[WorkflowDecisionOut] = Field(default_factory=list)
+    requirement_count: int = 0
+    compliance_count: int = 0
+    coverage_packs: list[str] = Field(default_factory=list)
+    sdlc_recommended: str | None = None
+    completed: bool = False
+
+
+
 __all__ = [
     "ActivityOut",
     "AffectedOut",
     "AgentUsageOut",
+    "ApprovalOut",
     "ArtefactsOut",
     "BriefIn",
     "Clarification",
@@ -403,6 +463,8 @@ __all__ = [
     "EvidenceOut",
     "ExtractIn",
     "FactorsIn",
+    "GateDecisionIn",
+    "GateSpecOut",
     "GraphEdge",
     "GraphNode",
     "GraphOut",
@@ -426,6 +488,9 @@ __all__ = [
     "UsageOut",
     "UseCaseOut",
     "UserStoryOut",
+    "WorkflowDecisionOut",
     "WorkflowIn",
     "WorkflowOut",
+    "WorkflowStartIn",
+    "WorkflowStatusOut",
 ]

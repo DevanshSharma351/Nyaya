@@ -23,11 +23,14 @@ from nyaya.api.deps import db_session
 from nyaya.api.schemas import (
     ActivityOut,
     AgentUsageOut,
+    ApprovalOut,
     ArtefactsOut,
     ControlCoverageOut,
     CoverageOut,
     DefectOut,
     EvidenceOut,
+    GateDecisionIn,
+    GateSpecOut,
     LLMCallEventOut,
     ModelUsageOut,
     PhaseOut,
@@ -44,10 +47,14 @@ from nyaya.api.schemas import (
     UseCaseOut,
     UserStoryOut,
     WorkflowOut,
+    WorkflowStartIn,
+    WorkflowStatusOut,
 )
 from nyaya.artefacts import build as build_artefacts
-from nyaya.core.enums import Priority, RequirementCategory, RiskLevel
-from nyaya.db.models import AuditEvent, Project, Requirement, SDLCAssessment, SDLCWorkflow
+from nyaya.core.enums import Priority, RequirementCategory, RiskLevel, StakeholderRole
+from nyaya.db.models import Approval, AuditEvent, Project, Requirement, SDLCAssessment, SDLCWorkflow
+from nyaya.graph.gates import GATES, UnauthorisedApproverError
+from nyaya.graph.runner import get_workflow_runner
 from nyaya.mcda.derive import derive
 from nyaya.mcda.sdlc import recommend
 from nyaya.mcda.workflow import generate as generate_workflow
@@ -761,6 +768,135 @@ async def generate_project_coverage(
             blocking_gaps=[g.control_id for g in r.blocking_gaps],
         )
         for r in reports
+    ]
+
+
+@router.get("/workflow/gates", response_model=list[GateSpecOut])
+async def list_workflow_gates():
+    """List all 6 mandatory human-in-the-loop approval gates and required roles."""
+    return [
+        GateSpecOut(
+            name=gate.name,
+            description=gate.description,
+            required_roles=[r.value for r in gate.required_roles],
+            blocking=gate.blocking,
+        )
+        for gate in GATES.values()
+    ]
+
+
+@router.post("/{project_id}/workflow/start", response_model=WorkflowStatusOut)
+async def start_project_workflow(
+    project_id: uuid.UUID,
+    payload: WorkflowStartIn | None = None,
+    session: AsyncSession = Depends(db_session),
+):
+    """Start or re-run the full LangGraph 8-layer workflow for a project.
+
+    Reuses existing persisted requirements if already extracted, running the
+    multi-agent workflow through human approval gates durably.
+    """
+    project = await session.get(Project, project_id)
+    if project is None:
+        raise HTTPException(404, "project not found")
+
+    body = payload or WorkflowStartIn()
+    runner = get_workflow_runner()
+    return await runner.start(
+        session=session,
+        project_id=project_id,
+        source_text=body.source_text,
+        domain=body.domain or project.domain,
+        jurisdictions=body.jurisdictions or project.jurisdictions,
+        stakeholder_role=body.stakeholder_role,
+    )
+
+
+@router.get("/{project_id}/workflow/status", response_model=WorkflowStatusOut)
+async def get_project_workflow_status(
+    project_id: uuid.UUID,
+    session: AsyncSession = Depends(db_session),
+):
+    """Query current execution state and active approval interrupts."""
+    project = await session.get(Project, project_id)
+    if project is None:
+        raise HTTPException(404, "project not found")
+
+    runner = get_workflow_runner()
+    return await runner.get_status(session, project_id)
+
+
+@router.post("/{project_id}/workflow/decide", response_model=WorkflowStatusOut)
+async def decide_project_workflow_gate(
+    project_id: uuid.UUID,
+    decision_in: GateDecisionIn,
+    session: AsyncSession = Depends(db_session),
+):
+    """Submit a human approval or rejection to clear an active gate interrupt.
+
+    Enforces role competence. Unauthorized roles are rejected with 403 Forbidden.
+    Resumes durable LangGraph execution.
+    """
+    project = await session.get(Project, project_id)
+    if project is None:
+        raise HTTPException(404, "project not found")
+
+    try:
+        role = StakeholderRole(decision_in.role)
+    except ValueError:
+        raise HTTPException(
+            400,
+            f"Invalid stakeholder role '{decision_in.role}'. Allowed: {[r.value for r in StakeholderRole]}",
+        ) from None
+
+    runner = get_workflow_runner()
+    try:
+        return await runner.decide(
+            session=session,
+            project_id=project_id,
+            gate_name=decision_in.gate,
+            decision=decision_in.decision,
+            actor=decision_in.actor,
+            role=role,
+            comment=decision_in.comment,
+        )
+    except UnauthorisedApproverError as e:
+        raise HTTPException(403, str(e)) from e
+    except KeyError as e:
+        raise HTTPException(400, str(e)) from e
+
+
+@router.get("/{project_id}/workflow/approvals", response_model=list[ApprovalOut])
+async def list_project_approvals(
+    project_id: uuid.UUID,
+    session: AsyncSession = Depends(db_session),
+):
+    """List all recorded human-in-the-loop approval gate decisions for this project."""
+    project = await session.get(Project, project_id)
+    if project is None:
+        raise HTTPException(404, "project not found")
+
+    rows = (
+        await session.execute(
+            select(Approval)
+            .where(Approval.project_id == project_id)
+            .order_by(Approval.created_at.asc())
+        )
+    ).scalars().all()
+
+    return [
+        ApprovalOut(
+            id=r.id,
+            project_id=r.project_id,
+            gate=r.gate,
+            required_role=r.required_role,
+            status=r.status.value if hasattr(r.status, "value") else str(r.status),
+            decided_by=r.decided_by,
+            decided_at=r.decided_at,
+            comment=r.comment,
+            created_at=r.created_at,
+        )
+        for r in rows
     ]
 
 

@@ -441,4 +441,85 @@ export const api = {
         body: JSON.stringify(patch),
       },
     ),
+
+  // LangGraph Multi-Agent Workflow & Human Approval Gates
+  workflowGates: () => request<GateSpec[]>("/projects/workflow/gates"),
+  startWorkflow: (projectId: string, payload: WorkflowStartPayload = {}) =>
+    request<WorkflowStatus>(`/projects/${encodeURIComponent(projectId)}/workflow/start`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  getWorkflowStatus: (projectId: string) =>
+    request<WorkflowStatus>(`/projects/${encodeURIComponent(projectId)}/workflow/status`),
+  decideWorkflowGate: (projectId: string, decision: GateDecision) =>
+    request<WorkflowStatus>(`/projects/${encodeURIComponent(projectId)}/workflow/decide`, {
+      method: "POST",
+      body: JSON.stringify(decision),
+    }),
+  listWorkflowApprovals: (projectId: string) =>
+    request<Approval[]>(`/projects/${encodeURIComponent(projectId)}/workflow/approvals`),
 };
+
+export type GateSpec = {
+  name: string;
+  description: string;
+  required_roles: string[];
+  blocking: boolean;
+};
+
+export type GateDecision = {
+  gate: string;
+  decision: "approve" | "reject";
+  actor: string;
+  role: string;
+  comment?: string;
+};
+
+export type Approval = {
+  id: string;
+  project_id: string;
+  gate: string;
+  required_role: string;
+  status: "pending_review" | "approved" | "rejected" | "superseded";
+  decided_by: string | null;
+  decided_at: string | null;
+  comment: string | null;
+  created_at: string;
+};
+
+export type WorkflowDecision = {
+  gate: string;
+  decision: string;
+  actor: string;
+  comment: string;
+  at: string;
+};
+
+export type WorkflowStatus = {
+  project_id: string;
+  status: "idle" | "running" | "waiting_approval" | "halted" | "completed";
+  current_node: string | null;
+  current_gate: string | null;
+  gate_payload: {
+    gate: string;
+    description: string;
+    required_roles: string[];
+    summary: Record<string, any>;
+  } | null;
+  halted: boolean;
+  halt_reason: string;
+  decisions: WorkflowDecision[];
+  requirement_count: number;
+  compliance_count: number;
+  coverage_packs: string[];
+  sdlc_recommended: string | null;
+  completed: boolean;
+};
+
+export type WorkflowStartPayload = {
+  source_text?: string;
+  domain?: string;
+  jurisdictions?: string[];
+  stakeholder_role?: string;
+};
+

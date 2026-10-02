@@ -12,6 +12,7 @@
 
 import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Block, ModuleShell, Rationale } from "@/components/chrome/ModuleShell";
 import { useJob } from "@/components/chrome/Jobs";
@@ -416,6 +417,11 @@ export default function RequirementsPage() {
                   >
                     {usageLoading ? "Loading…" : showUsageModal ? "Hide Observability" : "📊 Token / Cost Observability"}
                   </Button>
+                  <Link href="/workflow" style={{ textDecoration: "none" }}>
+                    <Button variant="quiet">
+                      🛡️ Workflow &amp; Human Gates →
+                    </Button>
+                  </Link>
                 </div>
 
                 {genSdlcError && <Failure message={genSdlcError} />}

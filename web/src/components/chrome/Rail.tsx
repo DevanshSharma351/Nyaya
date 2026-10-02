@@ -28,6 +28,7 @@ import {
   Search,
   ShieldCheck,
   History,
+  Workflow,
   type LucideIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
@@ -112,6 +113,7 @@ const ICONS: Record<IconName, LucideIcon> = {
   "git-branch": GitBranch,
   activity: Activity,
   history: History,
+  workflow: Workflow,
 };
 
 const indicator = { type: "spring" as const, stiffness: 420, damping: 36 };

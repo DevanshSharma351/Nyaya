@@ -18,18 +18,22 @@ human has not cleared.
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
+from sqlalchemy import select
 
 from nyaya.agents.compliance import map_requirement
 from nyaya.agents.extraction import extract
 from nyaya.agents.schemas import ExtractionContext
 from nyaya.core.enums import RiskLevel
 from nyaya.db import session_scope
+from nyaya.db.models import Project
 from nyaya.graph.gates import payload
+from nyaya.graph.persistence import persist_run
 from nyaya.graph.state import WorkflowState
 from nyaya.mcda.derive import factors_from_requirements
 from nyaya.mcda.sdlc import recommend
@@ -41,6 +45,8 @@ _ELEVATED = {RiskLevel.HIGH, RiskLevel.CRITICAL}
 
 async def node_extract(state: WorkflowState) -> dict[str, Any]:
     """Turn source text into structured, quality-checked requirements."""
+    if state.get("requirements"):
+        return {"requirements": state["requirements"], "unclear": state.get("unclear", [])}
     result = await extract(
         state["source_text"],
         context=ExtractionContext(
@@ -49,6 +55,7 @@ async def node_extract(state: WorkflowState) -> dict[str, Any]:
         ),
     )
     return {"requirements": result.requirements, "unclear": result.unclear}
+
 
 
 def node_baseline_gate(state: WorkflowState) -> dict[str, Any]:
@@ -224,7 +231,7 @@ def _derive_factors(state: WorkflowState) -> dict[str, float]:
     """Derive SDLC decision factors from what this run actually found."""
     # The workflow state is loosely typed, so the brief is narrowed here rather
     # than trusted: a non-string would otherwise reach the phrase matcher.
-    raw = state.get("raw_text")
+    raw = state.get("raw_text") or state.get("source_text")
     return factors_from_requirements(
         state.get("requirements", []),
         state.get("unclear", []),
@@ -255,6 +262,25 @@ def _record(decision: Any, gate: str) -> dict[str, Any]:
     return update
 
 
+async def node_persist(state: WorkflowState) -> dict[str, Any]:
+    """Persist the completed workflow run once approved."""
+    if state.get("halted") or not state.get("project_id"):
+        return {}
+    try:
+        project_uuid = uuid.UUID(state["project_id"])
+        async with session_scope() as session:
+            project = (
+                await session.execute(
+                    select(Project).where(Project.id == project_uuid)
+                )
+            ).scalar_one_or_none()
+            if project is not None:
+                await persist_run(session, state)
+    except Exception:
+        pass
+    return {}
+
+
 def build_graph(checkpointer: Any | None = None):
     """Assemble the workflow.
 
@@ -272,6 +298,7 @@ def build_graph(checkpointer: Any | None = None):
     graph.add_node("gap_gate", node_gap_gate)
     graph.add_node("recommend_sdlc", node_recommend_sdlc)
     graph.add_node("sdlc_gate", node_sdlc_gate)
+    graph.add_node("persist", node_persist)
 
     graph.add_edge(START, "extract")
     graph.add_edge("extract", "baseline_gate")
@@ -290,7 +317,11 @@ def build_graph(checkpointer: Any | None = None):
         {"continue": "recommend_sdlc", "halt": END},
     )
     graph.add_edge("recommend_sdlc", "sdlc_gate")
-    graph.add_edge("sdlc_gate", END)
+    graph.add_conditional_edges(
+        "sdlc_gate", _continue_or_halt,
+        {"continue": "persist", "halt": END},
+    )
+    graph.add_edge("persist", END)
 
     return graph.compile(checkpointer=checkpointer)
 
@@ -299,4 +330,4 @@ def _continue_or_halt(state: WorkflowState) -> str:
     return "halt" if state.get("halted") else "continue"
 
 
-__all__ = ["build_graph", "node_extract", "node_recommend_sdlc"]
+__all__ = ["build_graph", "node_extract", "node_persist", "node_recommend_sdlc"]
