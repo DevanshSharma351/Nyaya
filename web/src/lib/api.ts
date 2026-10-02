@@ -128,6 +128,8 @@ export type ExtractedRequirement = {
 };
 
 export type ExtractResult = {
+  /** The persisted project ID — pass to downstream generate endpoints. */
+  project_id: string;
   model: string;
   repair_rounds: number;
   /** What the run could not do. Empty on a clean run. */
@@ -353,4 +355,18 @@ export const api = {
   knowledgeGraph: () => request<Graph>("/graph/demo/knowledge"),
   projects: () => request<Project[]>("/projects"),
   projectSdlc: (id: string) => request<SDLCFromBrief>(`/projects/${encodeURIComponent(id)}/sdlc`),
+
+  // Project-based generate endpoints — zero LLM calls, instant results
+  generateArtefacts: (projectId: string) =>
+    request<Artefacts>(`/projects/${encodeURIComponent(projectId)}/artefacts/generate`, {
+      method: "POST",
+    }),
+  generateSdlc: (projectId: string) =>
+    request<SDLCFromBrief>(`/projects/${encodeURIComponent(projectId)}/sdlc/generate`, {
+      method: "POST",
+    }),
+  generateCoverage: (projectId: string) =>
+    request<Coverage[]>(`/projects/${encodeURIComponent(projectId)}/coverage/generate`, {
+      method: "POST",
+    }),
 };

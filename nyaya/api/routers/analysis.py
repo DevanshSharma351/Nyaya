@@ -59,12 +59,18 @@ def _with_clarifications(payload: ExtractIn | BriefIn) -> str:
 
 
 @router.post("/extract")
-async def extract_requirements(payload: ExtractIn):
+async def extract_requirements(
+    payload: ExtractIn, session: AsyncSession = Depends(db_session)
+):
     """Turn stakeholder text into structured, quality-checked requirements.
 
     Defects are returned alongside each requirement rather than filtered out:
     the point of the quality layer is that a reviewer sees what is wrong with a
     statement, not that weak statements are quietly dropped.
+
+    The extraction result is persisted as a Project with Requirements so that
+    downstream modules (SDLC, Artefacts, Coverage) can operate on the
+    project_id without re-running the LLM.
     """
     try:
         result = await extract(
@@ -77,7 +83,39 @@ async def extract_requirements(payload: ExtractIn):
         if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e) or "rate limit" in str(e).lower():
             raise HTTPException(429, "LLM rate limit exceeded. Please wait a minute and try again.")
         raise
+
+    # Persist project + requirements so downstream endpoints can reuse them
+    title = (payload.title or payload.text.split("\n")[0][:100]).strip()
+    if len(title) < 5:
+        title = "Requirement Analysis"
+
+    project = Project(
+        name=title,
+        domain=payload.domain,
+        description=payload.text,
+        jurisdictions=payload.jurisdictions,
+    )
+    session.add(project)
+    await session.flush()
+
+    for idx, item in enumerate(result.requirements):
+        req = Requirement(
+            project_id=project.id,
+            ref=f"REQ-{idx+1:03d}",
+            statement=item.requirement.statement,
+            categories=[c.value for c in item.requirement.categories],
+            priority=item.requirement.priority,
+            risk_level=item.requirement.risk_level,
+            business_justification=item.requirement.rationale,
+            acceptance_criteria=item.requirement.acceptance_criteria,
+            assumptions=item.requirement.assumptions,
+        )
+        session.add(req)
+
+    await session.flush()
+
     return {
+        "project_id": str(project.id),
         "model": result.model,
         "repair_rounds": result.repair_rounds,
         "notes": result.notes,

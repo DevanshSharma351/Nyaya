@@ -72,6 +72,7 @@ class Clarification(BaseModel):
 
 class ExtractIn(BaseModel):
     text: str = Field(min_length=1)
+    title: str | None = None
     domain: str = "ekyc_onboarding"
     jurisdictions: list[str] = Field(default_factory=lambda: ["IN"])
 

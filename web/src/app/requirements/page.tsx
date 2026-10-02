@@ -11,11 +11,12 @@
  */
 
 import dynamic from "next/dynamic";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Block, ModuleShell, Rationale } from "@/components/chrome/ModuleShell";
 import { useJob } from "@/components/chrome/Jobs";
 import { Badge, Button, Empty, Failure } from "@/components/ui";
-import { api, type Clarification, type ExtractResult } from "@/lib/api";
+import { api, type Clarification, type ExtractResult, type SDLCFromBrief, type Artefacts, type Coverage } from "@/lib/api";
 
 const RequirementLayer = dynamic(
   () => import("@/components/scenes/RequirementLayer"),
@@ -54,12 +55,64 @@ export default function RequirementsPage() {
   // failure this module exists to catch.
   const [answers, setAnswers] = useState<Record<string, string>>({});
 
+  // --- Downstream generation state (no LLM call — instant) ---
+  const [genSdlcLoading, setGenSdlcLoading] = useState(false);
+  const [genSdlcResult, setGenSdlcResult] = useState<SDLCFromBrief | null>(null);
+  const [genSdlcError, setGenSdlcError] = useState<string | null>(null);
+  const [genArtefactsLoading, setGenArtefactsLoading] = useState(false);
+  const [genArtefactsResult, setGenArtefactsResult] = useState<Artefacts | null>(null);
+  const [genArtefactsError, setGenArtefactsError] = useState<string | null>(null);
+  const [genCoverageLoading, setGenCoverageLoading] = useState(false);
+  const [genCoverageResult, setGenCoverageResult] = useState<Coverage[] | null>(null);
+  const [genCoverageError, setGenCoverageError] = useState<string | null>(null);
+
+  const projectId = result?.project_id ?? null;
+
+  async function handleGenerateSdlc() {
+    if (!projectId) return;
+    setGenSdlcLoading(true); setGenSdlcError(null);
+    try {
+      setGenSdlcResult(await api.generateSdlc(projectId));
+    } catch (e) {
+      setGenSdlcError((e as Error).message);
+    } finally {
+      setGenSdlcLoading(false);
+    }
+  }
+
+  async function handleGenerateArtefacts() {
+    if (!projectId) return;
+    setGenArtefactsLoading(true); setGenArtefactsError(null);
+    try {
+      setGenArtefactsResult(await api.generateArtefacts(projectId));
+    } catch (e) {
+      setGenArtefactsError((e as Error).message);
+    } finally {
+      setGenArtefactsLoading(false);
+    }
+  }
+
+  async function handleGenerateCoverage() {
+    if (!projectId) return;
+    setGenCoverageLoading(true); setGenCoverageError(null);
+    try {
+      setGenCoverageResult(await api.generateCoverage(projectId));
+    } catch (e) {
+      setGenCoverageError((e as Error).message);
+    } finally {
+      setGenCoverageLoading(false);
+    }
+  }
+
   async function run(withAnswers = false) {
     const clarifications: Clarification[] = withAnswers
       ? Object.entries(answers)
           .filter(([, answer]) => answer.trim())
           .map(([question, answer]) => ({ question, answer: answer.trim() }))
       : [];
+
+    // Clear any downstream results when re-extracting
+    setGenSdlcResult(null); setGenArtefactsResult(null); setGenCoverageResult(null);
 
     await runJob(
       text,
@@ -294,6 +347,110 @@ export default function RequirementsPage() {
                     unanswered questions are left open rather than guessed
                   </span>
                 </div>
+              </div>
+            )}
+
+            {/* --- Downstream actions: instant, no LLM call --- */}
+            {projectId && (
+              <div className="glass-raised specular mt-6 p-5 lg:p-6">
+                <div className="headline mb-1" style={{ color: "var(--accent)" }}>
+                  Generate from these requirements
+                </div>
+                <p className="caption mb-4" style={{ maxWidth: 620 }}>
+                  These use the requirements already extracted above — no additional LLM call.
+                  Results are generated instantly from deterministic engines.
+                </p>
+
+                <div className="flex flex-wrap gap-3">
+                  <Button
+                    onClick={handleGenerateSdlc}
+                    disabled={genSdlcLoading}
+                  >
+                    {genSdlcLoading ? "Generating…" : genSdlcResult ? "✓ SDLC Ready" : "Generate SDLC"}
+                  </Button>
+                  <Button
+                    onClick={handleGenerateArtefacts}
+                    disabled={genArtefactsLoading}
+                  >
+                    {genArtefactsLoading ? "Generating…" : genArtefactsResult ? "✓ Artefacts Ready" : "Generate Artefacts"}
+                  </Button>
+                  <Button
+                    onClick={handleGenerateCoverage}
+                    disabled={genCoverageLoading}
+                  >
+                    {genCoverageLoading ? "Generating…" : genCoverageResult ? "✓ Coverage Ready" : "Generate Coverage"}
+                  </Button>
+                </div>
+
+                {genSdlcError && <Failure message={genSdlcError} />}
+                {genArtefactsError && <Failure message={genArtefactsError} />}
+                {genCoverageError && <Failure message={genCoverageError} />}
+
+                {/* SDLC summary */}
+                {genSdlcResult && (
+                  <div className="glass mt-4 p-4" style={{ borderLeft: "2px solid var(--confirmed)" }}>
+                    <div className="body mb-2" style={{ fontWeight: 600 }}>
+                      SDLC Recommendation: {genSdlcResult.recommendation.recommended.replace(/_/g, " ")}
+                    </div>
+                    <div className="flex flex-wrap gap-2 mb-2">
+                      {genSdlcResult.recommendation.ranked.slice(0, 4).map((r) => (
+                        <Badge key={r.model} tone={r.model === genSdlcResult.recommendation.recommended ? "var(--confirmed)" : "var(--text-tertiary)"}>
+                          {r.model.replace(/_/g, " ")} — {r.percentage}%
+                        </Badge>
+                      ))}
+                    </div>
+                    <div className="caption">
+                      {genSdlcResult.observations.slice(0, 3).map((obs) => (
+                        <p key={obs} className="m-0 mb-1">{obs}</p>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Artefacts summary */}
+                {genArtefactsResult && (
+                  <div className="glass mt-4 p-4" style={{ borderLeft: "2px solid var(--accent)" }}>
+                    <div className="body mb-2" style={{ fontWeight: 600 }}>
+                      Artefacts Generated
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Badge tone="var(--accent)">{genArtefactsResult.user_stories.length} user stories</Badge>
+                      <Badge tone="var(--accent)">{genArtefactsResult.use_cases.length} use cases</Badge>
+                      <Badge tone="var(--accent)">{genArtefactsResult.risks.length} risks</Badge>
+                      <Badge tone={genArtefactsResult.traceability_coverage === 1 ? "var(--confirmed)" : "var(--review)"}>
+                        {Math.round(genArtefactsResult.traceability_coverage * 100)}% traceability
+                      </Badge>
+                    </div>
+                    {genArtefactsResult.open_issues.length > 0 && (
+                      <div className="caption mt-2" style={{ color: "var(--review)" }}>
+                        {genArtefactsResult.open_issues.length} open issue{genArtefactsResult.open_issues.length > 1 ? "s" : ""}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Coverage summary */}
+                {genCoverageResult && genCoverageResult.length > 0 && (
+                  <div className="glass mt-4 p-4" style={{ borderLeft: "2px solid var(--clause)" }}>
+                    <div className="body mb-2" style={{ fontWeight: 600 }}>
+                      Compliance Coverage
+                    </div>
+                    {genCoverageResult.map((pack) => (
+                      <div key={pack.pack} className="mb-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge tone={pack.coverage_ratio >= 0.8 ? "var(--confirmed)" : "var(--review)"}>
+                            {pack.pack} — {Math.round(pack.coverage_ratio * 100)}%
+                          </Badge>
+                          {pack.blocking_gaps.length > 0 && (
+                            <Badge tone="var(--gap)">
+                              {pack.blocking_gaps.length} gap{pack.blocking_gaps.length > 1 ? "s" : ""}
+                            </Badge>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </>
