@@ -27,6 +27,7 @@ import {
   PanelLeftOpen,
   Search,
   ShieldCheck,
+  History,
   type LucideIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
@@ -110,6 +111,7 @@ const ICONS: Record<IconName, LucideIcon> = {
   "shield-check": ShieldCheck,
   "git-branch": GitBranch,
   activity: Activity,
+  history: History,
 };
 
 const indicator = { type: "spring" as const, stiffness: 420, damping: 36 };

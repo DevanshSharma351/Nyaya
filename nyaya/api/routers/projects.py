@@ -11,13 +11,19 @@ from sqlalchemy.orm import selectinload
 
 from nyaya.api.deps import db_session
 from nyaya.api.schemas import (
+    ActivityOut,
     DefectOut,
     EvidenceOut,
+    PhaseOut,
     ProjectIn,
     ProjectOut,
     RequirementOut,
+    SDLCFromBriefOut,
+    SDLCOut,
+    SDLCRankOut,
+    WorkflowOut,
 )
-from nyaya.db.models import Project, Requirement
+from nyaya.db.models import Project, Requirement, SDLCAssessment, SDLCWorkflow
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -34,7 +40,8 @@ async def list_projects(session: AsyncSession = Depends(db_session)):
     ).all()
     return [
         ProjectOut(
-            id=p.id, name=p.name, domain=p.domain, jurisdictions=p.jurisdictions,
+            id=p.id, name=p.name, description=p.description,
+            domain=p.domain, jurisdictions=p.jurisdictions,
             status=p.status, created_at=p.created_at, requirement_count=count,
         )
         for p, count in rows
@@ -50,9 +57,9 @@ async def create_project(payload: ProjectIn, session: AsyncSession = Depends(db_
     session.add(project)
     await session.flush()
     return ProjectOut(
-        id=project.id, name=project.name, domain=project.domain,
-        jurisdictions=project.jurisdictions, status=project.status,
-        created_at=project.created_at,
+        id=project.id, name=project.name, description=project.description,
+        domain=project.domain, jurisdictions=project.jurisdictions,
+        status=project.status, created_at=project.created_at,
     )
 
 
@@ -115,10 +122,88 @@ async def get_project(project_id: uuid.UUID, session: AsyncSession = Depends(db_
         )
     ).scalar_one()
     return ProjectOut(
-        id=project.id, name=project.name, domain=project.domain,
-        jurisdictions=project.jurisdictions, status=project.status,
-        created_at=project.created_at, requirement_count=count,
+        id=project.id, name=project.name, description=project.description,
+        domain=project.domain, jurisdictions=project.jurisdictions,
+        status=project.status, created_at=project.created_at,
+        requirement_count=count,
     )
 
+@router.get("/{project_id}/sdlc", response_model=SDLCFromBriefOut)
+async def get_project_sdlc(project_id: uuid.UUID, session: AsyncSession = Depends(db_session)):
+    assessment = (
+        await session.execute(
+            select(SDLCAssessment)
+            .options(selectinload(SDLCAssessment.workflow))
+            .where(SDLCAssessment.project_id == project_id)
+            .order_by(SDLCAssessment.created_at.desc())
+        )
+    ).scalars().first()
 
+    if not assessment:
+        raise HTTPException(404, "no SDLC assessment found for this project")
+
+    count = (
+        await session.execute(
+            select(func.count(Requirement.id)).where(Requirement.project_id == project_id)
+        )
+    ).scalar_one()
+
+    # Reconstruct SDLCOut
+    # Note: We simulate the 'rankings' from scores
+    rankings = []
+    for model_name, closeness in assessment.scores.items():
+        rankings.append(
+            SDLCRankOut(
+                model=model_name,
+                percentage=int(closeness * 100),
+                closeness=closeness,
+                drivers={},
+            )
+        )
+    rankings.sort(key=lambda r: r.closeness, reverse=True)
+
+    recommendation = SDLCOut(
+        recommended=assessment.recommended.value,
+        ranked=rankings,
+        close_call=False,
+        consistency_ratio=assessment.consistency_ratio,
+        notes=[],
+        explanation=assessment.justification.split("\n") if assessment.justification else [],
+    )
+
+    wf = assessment.workflow
+    if not wf:
+        raise HTTPException(404, "no SDLC workflow found for this assessment")
+
+    workflow = WorkflowOut(
+        model=wf.model.value,
+        cadence="iterative",
+        phases=[
+            PhaseOut(
+                name=p.get("name", ""),
+                purpose=p.get("purpose", ""),
+                entry_criteria=p.get("entry_criteria", []),
+                exit_criteria=p.get("exit_criteria", []),
+                activities=[
+                    ActivityOut(**a) for a in p.get("activities", [])
+                ],
+                deliverables=p.get("deliverables", []),
+                roles=p.get("roles", []),
+                gate=p.get("gate"),
+            )
+            for p in wf.phases
+        ],
+        traceability=[],
+        notes=[],
+    )
+
+    return SDLCFromBriefOut(
+        project_id=project_id,
+        recommendation=recommendation,
+        workflow=workflow,
+        factors=assessment.factors,
+        observations=[],
+        requirements_extracted=count,
+        unclear=[],
+    )
 __all__ = ["router"]

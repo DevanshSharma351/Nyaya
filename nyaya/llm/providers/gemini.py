@@ -59,7 +59,7 @@ class GeminiProvider(LLMProvider):
             completion_tokens=getattr(meta, "candidates_token_count", 0) or 0,
         )
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=30), reraise=True)
+    @retry(stop=stop_after_attempt(6), wait=wait_exponential(min=2, max=60), reraise=True)
     async def _generate(self, contents: Any, config: dict[str, Any]) -> Any:
         # The SDK accepts a plain dict here and coerces it internally; the
         # typed config object is not used so that this adapter stays a thin

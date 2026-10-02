@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from nyaya.agents.extraction import extract
 from nyaya.agents.schemas import ExtractionContext
 from nyaya.api.deps import db_session
+from nyaya.db.models import Project, Requirement, SDLCAssessment, SDLCWorkflow
 from nyaya.api.schemas import (
     ActivityOut,
     AffectedOut,
@@ -65,12 +66,17 @@ async def extract_requirements(payload: ExtractIn):
     the point of the quality layer is that a reviewer sees what is wrong with a
     statement, not that weak statements are quietly dropped.
     """
-    result = await extract(
-        _with_clarifications(payload),
-        context=ExtractionContext(
-            domain=payload.domain, jurisdictions=payload.jurisdictions
-        ),
-    )
+    try:
+        result = await extract(
+            _with_clarifications(payload),
+            context=ExtractionContext(
+                domain=payload.domain, jurisdictions=payload.jurisdictions
+            ),
+        )
+    except Exception as e:
+        if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e) or "rate limit" in str(e).lower():
+            raise HTTPException(429, "LLM rate limit exceeded. Please wait a minute and try again.")
+        raise
     return {
         "model": result.model,
         "repair_rounds": result.repair_rounds,
@@ -173,29 +179,24 @@ async def recommend_sdlc(payload: FactorsIn):
 
 
 @router.post("/sdlc/from-brief", response_model=SDLCFromBriefOut)
-async def recommend_sdlc_from_brief(payload: BriefIn):
-    """Recommend a lifecycle for a project described in plain language.
-
-    This is the path that makes the recommendation mean something. Setting the
-    factor sliders by hand is choosing the answer and then computing it; here
-    the brief is extracted into requirements first, and the factors are read off
-    what was actually found - how much of it is regulatory, how much is high
-    risk, how many questions the brief left open.
-
-    It runs the extraction agent, so it is slow: a local model takes forty to a
-    hundred seconds on a brief of a few sentences. That cost is the point. A
-    recommendation produced instantly from a text box would be the model's
-    opinion about the words, not a derivation from their content.
-    """
+async def recommend_sdlc_from_brief(
+    payload: BriefIn, session: AsyncSession = Depends(db_session)
+):
+    """Recommend a lifecycle for a project described in plain language."""
     if not payload.text.strip():
         raise HTTPException(422, "a brief is required")
 
-    result = await extract(
-        _with_clarifications(payload),
-        context=ExtractionContext(
-            domain=payload.domain, jurisdictions=payload.jurisdictions
-        ),
-    )
+    try:
+        result = await extract(
+            _with_clarifications(payload),
+            context=ExtractionContext(
+                domain=payload.domain, jurisdictions=payload.jurisdictions
+            ),
+        )
+    except Exception as e:
+        if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e) or "rate limit" in str(e).lower():
+            raise HTTPException(429, "LLM rate limit exceeded. Please wait a minute and try again.")
+        raise
     derivation = derive(result.requirements, result.unclear, brief=payload.text)
     ranking = recommend(derivation.factors)
     critical = sum(
@@ -208,7 +209,76 @@ async def recommend_sdlc_from_brief(payload: BriefIn):
         critical_requirements=critical,
         open_questions=len(result.unclear),
     )
+    
+    title = payload.title or payload.text.split("\n")[0][:100]
+    if len(title) < 5:
+        title = "SDLC Assessment"
+        
+    project = Project(
+        name=title,
+        domain=payload.domain,
+        description=payload.text,
+        jurisdictions=payload.jurisdictions,
+    )
+    session.add(project)
+    await session.flush()
+    
+    for idx, item in enumerate(result.requirements):
+        req = Requirement(
+            project_id=project.id,
+            ref=f"REQ-{idx+1:03d}",
+            statement=item.requirement.statement,
+            categories=[c.value for c in item.requirement.categories],
+            priority=item.requirement.priority,
+            risk_level=item.requirement.risk_level,
+            business_justification=item.requirement.rationale,
+            acceptance_criteria=item.requirement.acceptance_criteria,
+            assumptions=item.requirement.assumptions,
+        )
+        session.add(req)
+        
+    assessment = SDLCAssessment(
+        project_id=project.id,
+        factors=derivation.factors,
+        weights=ranking.weights.criteria,
+        consistency_ratio=ranking.weights.consistency_ratio,
+        scores={r.name: r.closeness for r in ranking.ranking.rankings},
+        recommended=ranking.recommended,
+        justification="\n".join(ranking.ranking.explain()),
+    )
+    session.add(assessment)
+    await session.flush()
+    
+    wf = SDLCWorkflow(
+        assessment_id=assessment.id,
+        model=ranking.recommended,
+        phases=[
+            {
+                "name": p.name,
+                "purpose": p.purpose,
+                "entry_criteria": p.entry_criteria,
+                "exit_criteria": p.exit_criteria,
+                "activities": [
+                    {
+                        "name": a.name,
+                        "role": a.role,
+                        "because": a.because,
+                        "security": a.security,
+                        "compliance": a.compliance,
+                    } for a in p.activities
+                ],
+                "deliverables": p.deliverables,
+                "roles": p.roles,
+                "gate": p.gate,
+            } for p in workflow.phases
+        ],
+        gates=[],
+    )
+    session.add(wf)
+    await session.flush()
+
     return SDLCFromBriefOut(
+        project_id=project.id,
         recommendation=_to_sdlc_out(ranking),
         workflow=_to_workflow_out(workflow),
         factors=derivation.factors,
@@ -282,12 +352,17 @@ async def generate_artefacts(payload: ExtractIn):
     approved would be indistinguishable from one containing requirements they
     did, which is the whole problem this system exists to avoid.
     """
-    result = await extract(
-        _with_clarifications(payload),
-        context=ExtractionContext(
-            domain=payload.domain, jurisdictions=payload.jurisdictions
-        ),
-    )
+    try:
+        result = await extract(
+            _with_clarifications(payload),
+            context=ExtractionContext(
+                domain=payload.domain, jurisdictions=payload.jurisdictions
+            ),
+        )
+    except Exception as e:
+        if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e) or "rate limit" in str(e).lower():
+            raise HTTPException(429, "LLM rate limit exceeded. Please wait a minute and try again.")
+        raise
     artefacts = build_artefacts(
         result.requirements, project=payload.domain, unclear=result.unclear
     )

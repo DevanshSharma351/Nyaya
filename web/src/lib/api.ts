@@ -243,12 +243,23 @@ export type Workflow = {
 };
 
 export type SDLCFromBrief = {
+  project_id: string;
   recommendation: SDLC;
   factors: Record<string, number>;
   observations: string[];
   requirements_extracted: number;
   unclear: string[];
   workflow: Workflow;
+};
+
+export type Project = {
+  id: string;
+  name: string;
+  description?: string;
+  domain: string;
+  status: string;
+  created_at: string;
+  requirement_count: number;
 };
 
 export type SDLC = {
@@ -340,4 +351,6 @@ export const api = {
       body: JSON.stringify({ model, ...observations }),
     }),
   knowledgeGraph: () => request<Graph>("/graph/demo/knowledge"),
+  projects: () => request<Project[]>("/projects"),
+  projectSdlc: (id: string) => request<SDLCFromBrief>(`/projects/${encodeURIComponent(id)}/sdlc`),
 };

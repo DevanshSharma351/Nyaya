@@ -61,6 +61,12 @@ type Store = {
     describe: (result: never) => { label: string; detail?: string },
     running: { label: string; detail?: string },
   ) => Promise<void>;
+  setResult: (
+    key: string,
+    input: string,
+    result: unknown,
+    describe: (result: never) => { label: string; detail?: string }
+  ) => void;
   clear: (key: string) => void;
 };
 
@@ -79,7 +85,8 @@ export function useJobs(): Store {
  * captures the current input, and memoising it would run yesterday's text.
  */
 export function useJob<T>(key: string) {
-  const { jobs, start, clear } = useJobs();
+  const store = useJobs();
+  const { jobs, start, clear } = store;
   const job = (jobs[key] ?? { state: "idle" }) as Job<T>;
 
   const run = useCallback(
@@ -99,7 +106,19 @@ export function useJob<T>(key: string) {
     [key, start],
   );
 
-  return { job, run, clear: useCallback(() => clear(key), [clear, key]) };
+  const setResult = useCallback(
+    (input: string, result: T, describe: (result: T) => { label: string; detail?: string }) => {
+      store.setResult(
+        key,
+        input,
+        result,
+        describe as unknown as (result: never) => { label: string; detail?: string }
+      );
+    },
+    [key, store]
+  );
+
+  return { job, run, setResult, clear: useCallback(() => clear(key), [clear, key]) };
 }
 
 export function JobsProvider({ children }: { children: ReactNode }) {
@@ -152,6 +171,21 @@ export function JobsProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  const setResult = useCallback<Store["setResult"]>((key, input, result, describe) => {
+    const described = describe(result as never);
+    setJobs((current) => ({
+      ...current,
+      [key]: {
+        state: "done",
+        input,
+        result,
+        label: described.label,
+        detail: described.detail,
+        startedAt: Date.now(),
+      },
+    }));
+  }, []);
+
   const clear = useCallback((key: string) => {
     setJobs((current) => {
       const next = { ...current };
@@ -160,7 +194,7 @@ export function JobsProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const value = useMemo(() => ({ jobs, start, clear }), [jobs, start, clear]);
+  const value = useMemo(() => ({ jobs, start, setResult, clear }), [jobs, start, setResult, clear]);
 
   return <JobsContext.Provider value={value}>{children}</JobsContext.Provider>;
 }

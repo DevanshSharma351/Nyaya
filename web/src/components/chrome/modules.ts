@@ -23,7 +23,8 @@ export type IconName =
   | "file-text"
   | "shield-check"
   | "git-branch"
-  | "activity";
+  | "activity"
+  | "history";
 
 export const MODULES: Module[] = [
   {
@@ -67,6 +68,12 @@ export const MODULES: Module[] = [
     icon: "activity",
     name: "Impact",
     question: "The regulator amended it — what is now wrong?",
+  },
+  {
+    href: "/history",
+    icon: "history",
+    name: "History",
+    question: "What did we extract previously?",
   },
 ];
 

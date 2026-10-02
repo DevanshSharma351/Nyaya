@@ -85,6 +85,12 @@ export default function LifecyclePage() {
   const deriving = job.state === "running";
   const [brief, setBrief] = useState(job.input ?? BRIEF);
 
+  useEffect(() => {
+    if (job.input) {
+      setBrief(job.input);
+    }
+  }, [job.input]);
+
   async function deriveFromBrief() {
     await runJob(
       brief,
@@ -388,15 +394,13 @@ export default function LifecyclePage() {
             </button>
           ))}
         </div>
-      </Block>
 
-      {error && <Failure message={error} />}
-      {!error && !result && <Empty>Ranking…</Empty>}
+        {error && <div className="mt-4"><Failure message={error} /></div>}
+        {!error && !result && <div className="mt-4"><Empty>Ranking…</Empty></div>}
 
-      {result && (
-        <>
-          <Block>
-            <div className="flex flex-wrap items-center gap-2">
+        {result && (
+          <div className="mt-6" style={{ borderTop: "1px solid var(--hairline)", paddingTop: 20 }}>
+            <div className="flex flex-wrap items-center gap-2 mb-5">
               <Badge tone="var(--confirmed)">
                 recommended · {result.recommended.replace(/_/g, " ")}
               </Badge>
@@ -409,10 +413,9 @@ export default function LifecyclePage() {
                 <Badge tone="var(--review)">close call — human decision</Badge>
               )}
             </div>
-          </Block>
 
-          <Block title="Ranking">
-            <div className="flex flex-col gap-2.5">
+            <div className="headline mb-2">Ranking</div>
+            <div className="flex flex-col gap-2.5 mb-5">
               {result.ranked.map((rank, i) => (
                 <div
                   key={rank.model}
@@ -440,9 +443,6 @@ export default function LifecyclePage() {
                       overflow: "hidden",
                     }}
                   >
-                    {/* Drawn at its width. A bar that grows on scroll is a
-                        figure the reader has to wait for, and it does not grow
-                        at all if the animation never runs. */}
                     <div
                       style={{
                         height: "100%",
@@ -456,9 +456,8 @@ export default function LifecyclePage() {
                 </div>
               ))}
             </div>
-          </Block>
 
-          <Block title="Why">
+            <div className="headline mb-2">Why</div>
             {result.notes.length > 0 && (
               <div className="mb-4 flex flex-col gap-2">
                 {result.notes.map((note) => (
@@ -475,23 +474,23 @@ export default function LifecyclePage() {
                 </div>
               ))}
             </div>
+          </div>
+        )}
 
-            <Rationale>
-              Two corrections shaped this engine, both found by putting a
-              low-risk exploratory project through it and getting a DevSecOps
-              hybrid back. First, process ceremony has a cost: criteria like
-              documentation need must score on <em>proximity</em> to what the
-              project needs, not on how much of it a model provides. Second, and
-              less obvious, those match criteria must not be weighted by the
-              factor value — a project that needs light process cares about not
-              being burdened exactly as much as a regulated one cares about
-              rigour. The seven lifecycle profiles are the part of this module
-              least validated: they encode published guidance and my reading of
-              it, and they have not been reviewed by practising architects.
-            </Rationale>
-          </Block>
-        </>
-      )}
+        <Rationale>
+          Two corrections shaped this engine, both found by putting a
+          low-risk exploratory project through it and getting a DevSecOps
+          hybrid back. First, process ceremony has a cost: criteria like
+          documentation need must score on <em>proximity</em> to what the
+          project needs, not on how much of it a model provides. Second, and
+          less obvious, those match criteria must not be weighted by the
+          factor value — a project that needs light process cares about not
+          being burdened exactly as much as a regulated one cares about
+          rigour. The seven lifecycle profiles are the part of this module
+          least validated: they encode published guidance and my reading of
+          it, and they have not been reviewed by practising architects.
+        </Rationale>
+      </Block>
     </ModuleShell>
   );
 }

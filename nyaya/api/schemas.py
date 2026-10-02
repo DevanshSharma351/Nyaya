@@ -25,6 +25,7 @@ class ProjectIn(BaseModel):
 class ProjectOut(BaseModel):
     id: uuid.UUID
     name: str
+    description: str | None = None
     domain: str
     jurisdictions: list[str]
     status: str
@@ -150,10 +151,12 @@ class SDLCOut(BaseModel):
 class BriefIn(BaseModel):
     """A project brief in the stakeholder's own words."""
 
+    title: str | None = None
     text: str = Field(min_length=1)
     domain: str = "ekyc_onboarding"
     jurisdictions: list[str] = Field(default_factory=lambda: ["IN"])
     clarifications: list[Clarification] = Field(default_factory=list)
+
 
 
 class SDLCFromBriefOut(BaseModel):
@@ -165,6 +168,7 @@ class SDLCFromBriefOut(BaseModel):
     argument actually lives.
     """
 
+    project_id: uuid.UUID
     recommendation: SDLCOut
     factors: dict[str, float]
     observations: list[str]
