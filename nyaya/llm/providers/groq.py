@@ -33,14 +33,14 @@ class GroqProvider(LLMProvider):
 
         self._client = AsyncGroq(api_key=api_key)
 
-    @staticmethod
-    def _usage(response: Any) -> Usage:
+    def _usage(self, response: Any) -> Usage:
         usage = getattr(response, "usage", None)
         if usage is None:
-            return Usage()
+            return Usage(model=self.model)
         return Usage(
             prompt_tokens=getattr(usage, "prompt_tokens", 0) or 0,
             completion_tokens=getattr(usage, "completion_tokens", 0) or 0,
+            model=self.model,
         )
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=30), reraise=True)

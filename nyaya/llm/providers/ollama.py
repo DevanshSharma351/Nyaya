@@ -66,11 +66,11 @@ class OllamaProvider(LLMProvider):
         response.raise_for_status()
         return response.json()
 
-    @staticmethod
-    def _usage(body: dict[str, Any]) -> Usage:
+    def _usage(self, body: dict[str, Any]) -> Usage:
         return Usage(
             prompt_tokens=body.get("prompt_eval_count", 0) or 0,
             completion_tokens=body.get("eval_count", 0) or 0,
+            model=self.model,
         )
 
     def _options(self, temperature: float, max_tokens: int | None) -> dict[str, Any]:

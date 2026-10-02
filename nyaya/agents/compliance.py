@@ -33,7 +33,7 @@ from nyaya.agents.schemas import ExtractedRequirement
 from nyaya.config import ModelRole
 from nyaya.core.confidence import Confidence, ConfidenceComponents, fuse
 from nyaya.core.enums import EvidenceRelation
-from nyaya.llm import Message, get_provider
+from nyaya.llm import Message, Usage, get_provider
 from nyaya.retrieval import obligation
 from nyaya.retrieval.hybrid import Retrieved, load_context, resolve_citation
 from nyaya.retrieval.search import SearchOptions, search
@@ -183,6 +183,7 @@ class ComplianceResult:
     evidence: list[Retrieved] = field(default_factory=list)
     rule_seeded_controls: list[str] = field(default_factory=list)
     model: str = ""
+    usage: Usage = field(default_factory=Usage)
 
     @property
     def confirmed(self) -> list[ValidatedMapping]:
@@ -284,6 +285,13 @@ async def map_requirement(
             await _validate(session, requirement, proposal, seeded_ids, retrieved_by_key)
         )
 
+    usage = Usage(
+        prompt_tokens=completion.completion.usage.prompt_tokens,
+        completion_tokens=completion.completion.usage.completion_tokens,
+        model=f"{provider.name}:{provider.model}",
+        role=role.value,
+    )
+
     return ComplianceResult(
         requirement_statement=requirement.statement,
         mappings=validated,
@@ -291,6 +299,7 @@ async def map_requirement(
         evidence=retrieved.results,
         rule_seeded_controls=sorted(seeded_ids),
         model=f"{provider.name}:{provider.model}",
+        usage=usage,
     )
 
 

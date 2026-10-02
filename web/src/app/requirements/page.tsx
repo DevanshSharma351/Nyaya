@@ -16,7 +16,7 @@ import { useRouter } from "next/navigation";
 import { Block, ModuleShell, Rationale } from "@/components/chrome/ModuleShell";
 import { useJob } from "@/components/chrome/Jobs";
 import { Badge, Button, Empty, Failure } from "@/components/ui";
-import { api, type Clarification, type ExtractResult, type SDLCFromBrief, type Artefacts, type Coverage } from "@/lib/api";
+import { api, type Clarification, type ExtractResult, type SDLCFromBrief, type Artefacts, type Coverage, type ProjectUsage } from "@/lib/api";
 
 const RequirementLayer = dynamic(
   () => import("@/components/scenes/RequirementLayer"),
@@ -66,7 +66,29 @@ export default function RequirementsPage() {
   const [genCoverageResult, setGenCoverageResult] = useState<Coverage[] | null>(null);
   const [genCoverageError, setGenCoverageError] = useState<string | null>(null);
 
+  // --- Token / Cost Observability State ---
+  const [projectUsage, setProjectUsage] = useState<ProjectUsage | null>(null);
+  const [usageLoading, setUsageLoading] = useState(false);
+  const [showUsageModal, setShowUsageModal] = useState(false);
+
   const projectId = result?.project_id ?? null;
+
+  async function handleLoadUsage() {
+    if (!projectId) return;
+    if (showUsageModal) {
+      setShowUsageModal(false);
+      return;
+    }
+    setUsageLoading(true);
+    try {
+      setProjectUsage(await api.projectUsage(projectId));
+      setShowUsageModal(true);
+    } catch {
+      // non-critical
+    } finally {
+      setUsageLoading(false);
+    }
+  }
 
   async function handleGenerateSdlc() {
     if (!projectId) return;
@@ -215,6 +237,14 @@ export default function RequirementsPage() {
                 <Badge tone="var(--review)">
                   {result.repair_rounds} repair round
                   {result.repair_rounds > 1 ? "s" : ""}
+                </Badge>
+              )}
+              {result.usage && (
+                <Badge tone="var(--clause)">
+                  {result.usage.total_tokens.toLocaleString()} tokens
+                  {result.usage.cost_usd > 0
+                    ? ` • $${result.usage.cost_usd.toFixed(4)}`
+                    : " • $0.00"}
                 </Badge>
               )}
             </div>
@@ -380,17 +410,108 @@ export default function RequirementsPage() {
                   >
                     {genCoverageLoading ? "Generating…" : genCoverageResult ? "✓ Coverage Ready" : "Generate Coverage"}
                   </Button>
+                  <Button
+                    onClick={handleLoadUsage}
+                    disabled={usageLoading}
+                  >
+                    {usageLoading ? "Loading…" : showUsageModal ? "Hide Observability" : "📊 Token / Cost Observability"}
+                  </Button>
                 </div>
 
                 {genSdlcError && <Failure message={genSdlcError} />}
                 {genArtefactsError && <Failure message={genArtefactsError} />}
                 {genCoverageError && <Failure message={genCoverageError} />}
 
+                {/* Token / Cost Observability card */}
+                {showUsageModal && projectUsage && (
+                  <div className="glass-raised mt-4 p-5" style={{ borderLeft: "2px solid var(--accent)", borderRadius: 12 }}>
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                      <div className="body" style={{ fontWeight: 600 }}>
+                        Token &amp; Cost Observability (Audit Ledger)
+                      </div>
+                      <Badge tone="var(--accent)">
+                        {projectUsage.total_calls} LLM Call{projectUsage.total_calls !== 1 ? "s" : ""}
+                      </Badge>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+                      <div className="glass p-3" style={{ borderRadius: 8 }}>
+                        <div className="caption" style={{ color: "var(--text-tertiary)" }}>Total Tokens</div>
+                        <div className="body" style={{ fontWeight: 600, fontSize: "1.1rem" }}>
+                          {projectUsage.total_tokens.toLocaleString()}
+                        </div>
+                      </div>
+                      <div className="glass p-3" style={{ borderRadius: 8 }}>
+                        <div className="caption" style={{ color: "var(--text-tertiary)" }}>Prompt Tokens</div>
+                        <div className="body" style={{ fontWeight: 600, fontSize: "1.1rem" }}>
+                          {projectUsage.prompt_tokens.toLocaleString()}
+                        </div>
+                      </div>
+                      <div className="glass p-3" style={{ borderRadius: 8 }}>
+                        <div className="caption" style={{ color: "var(--text-tertiary)" }}>Completion Tokens</div>
+                        <div className="body" style={{ fontWeight: 600, fontSize: "1.1rem" }}>
+                          {projectUsage.completion_tokens.toLocaleString()}
+                        </div>
+                      </div>
+                      <div className="glass p-3" style={{ borderRadius: 8 }}>
+                        <div className="caption" style={{ color: "var(--text-tertiary)" }}>Est. Cost (USD)</div>
+                        <div className="body" style={{ fontWeight: 600, fontSize: "1.1rem", color: projectUsage.total_cost_usd > 0 ? "var(--accent)" : "var(--confirmed)" }}>
+                          ${projectUsage.total_cost_usd.toFixed(4)}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Breakdown by Agent */}
+                    {projectUsage.by_agent.length > 0 && (
+                      <div className="mb-3">
+                        <div className="caption mb-1.5" style={{ fontWeight: 600 }}>By Agent:</div>
+                        <div className="flex flex-wrap gap-2">
+                          {projectUsage.by_agent.map((a) => (
+                            <Badge key={a.agent} tone="var(--clause)">
+                              {a.agent}: {a.calls} call{a.calls > 1 ? "s" : ""} • {a.total_tokens.toLocaleString()} tok (${a.cost_usd.toFixed(4)})
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Event log */}
+                    {projectUsage.events.length > 0 && (
+                      <div>
+                        <div className="caption mb-1.5" style={{ fontWeight: 600 }}>Ledger Audit Log:</div>
+                        <div className="flex flex-col gap-1.5">
+                          {projectUsage.events.map((ev, idx) => (
+                            <div key={idx} className="caption flex flex-wrap items-center justify-between p-2 glass" style={{ borderRadius: 6 }}>
+                              <span>
+                                <strong>[{ev.agent}]</strong> {ev.model} • {ev.prompt_tokens} in / {ev.completion_tokens} out
+                              </span>
+                              <span style={{ color: "var(--text-secondary)" }}>
+                                {new Date(ev.occurred_at).toLocaleTimeString()} • ${ev.cost_usd.toFixed(4)}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* SDLC summary */}
                 {genSdlcResult && (
-                  <div className="glass mt-4 p-4" style={{ borderLeft: "2px solid var(--confirmed)" }}>
+                  <div className="glass mt-4 p-4" style={{ borderLeft: `2px solid ${genSdlcResult.is_stale ? "var(--gap)" : "var(--confirmed)"}` }}>
+                    {genSdlcResult.is_stale && (
+                      <div className="flex flex-wrap items-center justify-between gap-3 p-3 mb-3" style={{ background: "rgba(239, 68, 68, 0.12)", border: "1px solid var(--gap)", borderRadius: 8 }}>
+                        <span className="caption" style={{ color: "var(--gap)", fontWeight: 600 }}>
+                          ⚠️ Requirements have been modified — this SDLC recommendation is outdated.
+                        </span>
+                        <Button onClick={handleGenerateSdlc} disabled={genSdlcLoading}>
+                          {genSdlcLoading ? "Refreshing…" : "🔄 Refresh SDLC (Instant)"}
+                        </Button>
+                      </div>
+                    )}
                     <div className="body mb-2" style={{ fontWeight: 600 }}>
                       SDLC Recommendation: {genSdlcResult.recommendation.recommended.replace(/_/g, " ")}
+                      {genSdlcResult.is_stale && <span className="caption ml-2" style={{ color: "var(--gap)" }}>(outdated)</span>}
                     </div>
                     <div className="flex flex-wrap gap-2 mb-2">
                       {genSdlcResult.recommendation.ranked.slice(0, 4).map((r) => (

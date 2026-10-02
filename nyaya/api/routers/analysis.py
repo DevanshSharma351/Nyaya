@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from nyaya.agents.extraction import extract
 from nyaya.agents.schemas import ExtractionContext
 from nyaya.api.deps import db_session
-from nyaya.db.models import Project, Requirement, SDLCAssessment, SDLCWorkflow
 from nyaya.api.schemas import (
     ActivityOut,
     AffectedOut,
@@ -32,7 +31,9 @@ from nyaya.api.schemas import (
     WorkflowOut,
 )
 from nyaya.artefacts import build as build_artefacts
+from nyaya.core import ledger
 from nyaya.core.enums import RiskLevel, SDLCModel
+from nyaya.db.models import Project, Requirement, SDLCAssessment, SDLCWorkflow
 from nyaya.graph.impact import analyse_change
 from nyaya.mcda.derive import derive
 from nyaya.mcda.sdlc import default_factors, recommend
@@ -81,7 +82,7 @@ async def extract_requirements(
         )
     except Exception as e:
         if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e) or "rate limit" in str(e).lower():
-            raise HTTPException(429, "LLM rate limit exceeded. Please wait a minute and try again.")
+            raise HTTPException(429, "LLM rate limit exceeded. Please wait a minute and try again.") from e
         raise
 
     # Persist project + requirements so downstream endpoints can reuse them
@@ -114,10 +115,36 @@ async def extract_requirements(
 
     await session.flush()
 
+    # Record LLM token/cost usage in the audit ledger
+    await ledger.record(
+        session,
+        project_id=project.id,
+        event_type="llm_call",
+        actor=result.model,
+        actor_kind="agent",
+        payload={
+            "agent": "extraction",
+            "model": result.model,
+            "prompt_tokens": result.usage.prompt_tokens,
+            "completion_tokens": result.usage.completion_tokens,
+            "total_tokens": result.usage.total_tokens,
+            "cost_usd": result.usage.cost_usd,
+            "repair_rounds": result.repair_rounds,
+        },
+        subject_kind="project",
+        subject_id=project.id,
+    )
+
     return {
         "project_id": str(project.id),
         "model": result.model,
         "repair_rounds": result.repair_rounds,
+        "usage": {
+            "prompt_tokens": result.usage.prompt_tokens,
+            "completion_tokens": result.usage.completion_tokens,
+            "total_tokens": result.usage.total_tokens,
+            "cost_usd": result.usage.cost_usd,
+        },
         "notes": result.notes,
         "testable_fraction": result.testable_fraction,
         "unclear": result.unclear,
@@ -233,7 +260,7 @@ async def recommend_sdlc_from_brief(
         )
     except Exception as e:
         if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e) or "rate limit" in str(e).lower():
-            raise HTTPException(429, "LLM rate limit exceeded. Please wait a minute and try again.")
+            raise HTTPException(429, "LLM rate limit exceeded. Please wait a minute and try again.") from e
         raise
     derivation = derive(result.requirements, result.unclear, brief=payload.text)
     ranking = recommend(derivation.factors)
@@ -314,6 +341,25 @@ async def recommend_sdlc_from_brief(
     )
     session.add(wf)
     await session.flush()
+
+    await ledger.record(
+        session,
+        project_id=project.id,
+        event_type="llm_call",
+        actor=result.model,
+        actor_kind="agent",
+        payload={
+            "agent": "extraction",
+            "model": result.model,
+            "prompt_tokens": result.usage.prompt_tokens,
+            "completion_tokens": result.usage.completion_tokens,
+            "total_tokens": result.usage.total_tokens,
+            "cost_usd": result.usage.cost_usd,
+            "repair_rounds": result.repair_rounds,
+        },
+        subject_kind="project",
+        subject_id=project.id,
+    )
 
     return SDLCFromBriefOut(
         project_id=project.id,
@@ -399,7 +445,7 @@ async def generate_artefacts(payload: ExtractIn):
         )
     except Exception as e:
         if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e) or "rate limit" in str(e).lower():
-            raise HTTPException(429, "LLM rate limit exceeded. Please wait a minute and try again.")
+            raise HTTPException(429, "LLM rate limit exceeded. Please wait a minute and try again.") from e
         raise
     artefacts = build_artefacts(
         result.requirements, project=payload.domain, unclear=result.unclear

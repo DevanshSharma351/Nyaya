@@ -63,6 +63,15 @@ class RequirementOut(BaseModel):
     evidence: list[EvidenceOut] = Field(default_factory=list)
 
 
+class RequirementUpdateIn(BaseModel):
+    statement: str | None = None
+    priority: Priority | None = None
+    risk_level: RiskLevel | None = None
+    categories: list[RequirementCategory] | None = None
+    acceptance_criteria: list[str] | None = None
+    business_justification: str | None = None
+
+
 class Clarification(BaseModel):
     """An open question, and the answer a stakeholder gave for it."""
 
@@ -176,6 +185,7 @@ class SDLCFromBriefOut(BaseModel):
     requirements_extracted: int
     unclear: list[str]
     workflow: WorkflowOut
+    is_stale: bool = False
     """The recommendation made concrete. A lifecycle name tells a team what to
     call their process; the workflow tells them how to run it, which is the half
     of "SDLC identification" a label alone does not deliver."""
@@ -330,9 +340,59 @@ class HealthOut(BaseModel):
     corpus_clauses: int
 
 
+class UsageOut(BaseModel):
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    cost_usd: float = 0.0
+
+
+class LLMCallEventOut(BaseModel):
+    occurred_at: datetime
+    actor: str
+    agent: str
+    model: str
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    cost_usd: float
+    repair_rounds: int = 0
+
+
+class AgentUsageOut(BaseModel):
+    agent: str
+    calls: int
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    cost_usd: float
+
+
+class ModelUsageOut(BaseModel):
+    model: str
+    calls: int
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    cost_usd: float
+
+
+class ProjectUsageOut(BaseModel):
+    project_id: uuid.UUID
+    total_calls: int
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    total_cost_usd: float
+    by_agent: list[AgentUsageOut] = Field(default_factory=list)
+    by_model: list[ModelUsageOut] = Field(default_factory=list)
+    events: list[LLMCallEventOut] = Field(default_factory=list)
+
+
 __all__ = [
     "ActivityOut",
     "AffectedOut",
+    "AgentUsageOut",
     "ArtefactsOut",
     "BriefIn",
     "Clarification",
@@ -349,16 +409,21 @@ __all__ = [
     "HealthOut",
     "ImpactIn",
     "ImpactOut",
+    "LLMCallEventOut",
+    "ModelUsageOut",
     "PhaseOut",
     "ProjectIn",
     "ProjectOut",
+    "ProjectUsageOut",
     "RequirementOut",
+    "RequirementUpdateIn",
     "RiskEntryOut",
     "SDLCFromBriefOut",
     "SDLCOut",
     "SDLCRankOut",
     "SearchIn",
     "TraceRowOut",
+    "UsageOut",
     "UseCaseOut",
     "UserStoryOut",
     "WorkflowIn",

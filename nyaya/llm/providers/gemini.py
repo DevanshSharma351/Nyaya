@@ -49,14 +49,14 @@ class GeminiProvider(LLMProvider):
         ]
         return system, contents
 
-    @staticmethod
-    def _usage(response: Any) -> Usage:
+    def _usage(self, response: Any) -> Usage:
         meta = getattr(response, "usage_metadata", None)
         if meta is None:
-            return Usage()
+            return Usage(model=self.model)
         return Usage(
             prompt_tokens=getattr(meta, "prompt_token_count", 0) or 0,
             completion_tokens=getattr(meta, "candidates_token_count", 0) or 0,
+            model=self.model,
         )
 
     @retry(stop=stop_after_attempt(6), wait=wait_exponential(min=2, max=60), reraise=True)

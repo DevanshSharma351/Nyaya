@@ -8,8 +8,11 @@ database, not a new extraction call.
 
 from __future__ import annotations
 
+import contextlib
 import uuid
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
@@ -19,15 +22,20 @@ from sqlalchemy.orm import selectinload
 from nyaya.api.deps import db_session
 from nyaya.api.schemas import (
     ActivityOut,
+    AgentUsageOut,
     ArtefactsOut,
     ControlCoverageOut,
     CoverageOut,
     DefectOut,
     EvidenceOut,
+    LLMCallEventOut,
+    ModelUsageOut,
     PhaseOut,
     ProjectIn,
     ProjectOut,
+    ProjectUsageOut,
     RequirementOut,
+    RequirementUpdateIn,
     RiskEntryOut,
     SDLCFromBriefOut,
     SDLCOut,
@@ -39,7 +47,7 @@ from nyaya.api.schemas import (
 )
 from nyaya.artefacts import build as build_artefacts
 from nyaya.core.enums import Priority, RequirementCategory, RiskLevel
-from nyaya.db.models import Project, Requirement, SDLCAssessment, SDLCWorkflow
+from nyaya.db.models import AuditEvent, Project, Requirement, SDLCAssessment, SDLCWorkflow
 from nyaya.mcda.derive import derive
 from nyaya.mcda.sdlc import recommend
 from nyaya.mcda.workflow import generate as generate_workflow
@@ -131,6 +139,106 @@ async def list_requirements(
     ]
 
 
+@router.patch("/{project_id}/requirements/{requirement_id}", response_model=RequirementOut)
+async def update_requirement(
+    project_id: uuid.UUID,
+    requirement_id: uuid.UUID,
+    payload: RequirementUpdateIn,
+    session: AsyncSession = Depends(db_session),
+):
+    """Edit an individual requirement.
+
+    Marks downstream SDLC and artefacts stale, and records a human_edit audit event.
+    """
+    req = (
+        await session.execute(
+            select(Requirement)
+            .options(
+                selectinload(Requirement.defects),
+                selectinload(Requirement.evidence),
+            )
+            .where(
+                Requirement.id == requirement_id,
+                Requirement.project_id == project_id,
+            )
+        )
+    ).scalars().first()
+
+    if req is None:
+        raise HTTPException(404, "requirement not found")
+
+    changes: dict[str, Any] = {}
+    if payload.statement is not None:
+        req.statement = payload.statement
+        changes["statement"] = payload.statement
+    if payload.priority is not None:
+        req.priority = payload.priority
+        changes["priority"] = payload.priority.value
+    if payload.risk_level is not None:
+        req.risk_level = payload.risk_level
+        changes["risk_level"] = payload.risk_level.value
+    if payload.categories is not None:
+        req.categories = [c.value for c in payload.categories]
+        changes["categories"] = req.categories
+    if payload.acceptance_criteria is not None:
+        req.acceptance_criteria = payload.acceptance_criteria
+        changes["acceptance_criteria"] = payload.acceptance_criteria
+    if payload.business_justification is not None:
+        req.business_justification = payload.business_justification
+        changes["business_justification"] = payload.business_justification
+
+    req.updated_at = datetime.now(UTC)
+    await session.flush()
+
+    from nyaya.core import ledger
+    await ledger.record(
+        session,
+        project_id=project_id,
+        event_type="human_edit",
+        actor="user",
+        actor_kind="human",
+        payload={
+            "requirement_id": str(req.id),
+            "ref": req.ref,
+            "changes": changes,
+        },
+        subject_kind="requirement",
+        subject_id=req.id,
+    )
+
+    return RequirementOut(
+        id=req.id,
+        ref=req.ref,
+        statement=req.statement,
+        categories=req.categories,
+        priority=req.priority,
+        risk_level=req.risk_level,
+        approval_status=str(req.approval_status),
+        confidence=req.confidence,
+        acceptance_criteria=req.acceptance_criteria,
+        defects=[
+            DefectOut(
+                defect_type=str(d.defect_type),
+                severity=str(d.severity),
+                detail=d.detail,
+                detector=d.detector,
+            )
+            for d in req.defects
+        ],
+        evidence=[
+            EvidenceOut(
+                cited_key=e.cited_key,
+                quoted_text=e.quoted_text,
+                relation=str(e.relation),
+                entailment_score=e.entailment_score,
+                rerank_score=e.rerank_score,
+                resolved=e.resolved,
+            )
+            for e in req.evidence
+        ],
+    )
+
+
 @router.get("/{project_id}", response_model=ProjectOut)
 async def get_project(project_id: uuid.UUID, session: AsyncSession = Depends(db_session)):
     project = await session.get(Project, project_id)
@@ -147,6 +255,105 @@ async def get_project(project_id: uuid.UUID, session: AsyncSession = Depends(db_
         status=project.status, created_at=project.created_at,
         requirement_count=count,
     )
+
+
+@router.get("/{project_id}/usage", response_model=ProjectUsageOut)
+async def get_project_usage(
+    project_id: uuid.UUID, session: AsyncSession = Depends(db_session)
+):
+    """Aggregate token and cost observability metrics from the audit ledger."""
+    project = await session.get(Project, project_id)
+    if project is None:
+        raise HTTPException(404, "project not found")
+
+    events = (
+        await session.execute(
+            select(AuditEvent)
+            .where(
+                AuditEvent.project_id == project_id,
+                AuditEvent.event_type == "llm_call",
+            )
+            .order_by(AuditEvent.occurred_at.asc())
+        )
+    ).scalars().all()
+
+    call_events: list[LLMCallEventOut] = []
+    by_agent_map: dict[str, dict] = {}
+    by_model_map: dict[str, dict] = {}
+    total_prompt = 0
+    total_completion = 0
+    total_cost = 0.0
+
+    for ev in events:
+        p = ev.payload or {}
+        agent = p.get("agent", "unknown")
+        model = p.get("model", ev.actor or "unknown")
+        prompt = p.get("prompt_tokens", 0)
+        completion = p.get("completion_tokens", 0)
+        tot = p.get("total_tokens", prompt + completion)
+        cost = p.get("cost_usd", 0.0)
+        repair = p.get("repair_rounds", 0)
+
+        total_prompt += prompt
+        total_completion += completion
+        total_cost += cost
+
+        if agent not in by_agent_map:
+            by_agent_map[agent] = {
+                "agent": agent,
+                "calls": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "cost_usd": 0.0,
+            }
+        by_agent_map[agent]["calls"] += 1
+        by_agent_map[agent]["prompt_tokens"] += prompt
+        by_agent_map[agent]["completion_tokens"] += completion
+        by_agent_map[agent]["total_tokens"] += tot
+        by_agent_map[agent]["cost_usd"] = round(by_agent_map[agent]["cost_usd"] + cost, 6)
+
+        if model not in by_model_map:
+            by_model_map[model] = {
+                "model": model,
+                "calls": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "cost_usd": 0.0,
+            }
+        by_model_map[model]["calls"] += 1
+        by_model_map[model]["prompt_tokens"] += prompt
+        by_model_map[model]["completion_tokens"] += completion
+        by_model_map[model]["total_tokens"] += tot
+        by_model_map[model]["cost_usd"] = round(by_model_map[model]["cost_usd"] + cost, 6)
+
+        call_events.append(
+            LLMCallEventOut(
+                occurred_at=ev.occurred_at,
+                actor=ev.actor,
+                agent=agent,
+                model=model,
+                prompt_tokens=prompt,
+                completion_tokens=completion,
+                total_tokens=tot,
+                cost_usd=cost,
+                repair_rounds=repair,
+            )
+        )
+
+    return ProjectUsageOut(
+        project_id=project_id,
+        total_calls=len(events),
+        prompt_tokens=total_prompt,
+        completion_tokens=total_completion,
+        total_tokens=total_prompt + total_completion,
+        total_cost_usd=round(total_cost, 6),
+        by_agent=[AgentUsageOut(**v) for v in by_agent_map.values()],
+        by_model=[ModelUsageOut(**v) for v in by_model_map.values()],
+        events=call_events,
+    )
+
 
 @router.get("/{project_id}/sdlc", response_model=SDLCFromBriefOut)
 async def get_project_sdlc(project_id: uuid.UUID, session: AsyncSession = Depends(db_session)):
@@ -217,6 +424,14 @@ async def get_project_sdlc(project_id: uuid.UUID, session: AsyncSession = Depend
         notes=[],
     )
 
+    max_updated = (
+        await session.execute(
+            select(func.max(Requirement.updated_at)).where(Requirement.project_id == project_id)
+        )
+    ).scalar_one_or_none()
+
+    is_stale = bool(max_updated and assessment.created_at and max_updated > assessment.created_at)
+
     return SDLCFromBriefOut(
         project_id=project_id,
         recommendation=recommendation,
@@ -225,6 +440,7 @@ async def get_project_sdlc(project_id: uuid.UUID, session: AsyncSession = Depend
         observations=[],
         requirements_extracted=count,
         unclear=[],
+        is_stale=is_stale,
     )
 
 
@@ -282,10 +498,8 @@ def _db_to_analysed(rows: list[Requirement]) -> list[_FakeAnalysed]:
     for r in rows:
         cats = []
         for c in (r.categories or []):
-            try:
+            with contextlib.suppress(ValueError):
                 cats.append(RequirementCategory(c))
-            except ValueError:
-                pass
 
         # Defects are eagerly loaded by _load_requirements; access is safe here.
         db_defects = list(r.defects) if r.defects else []
@@ -495,6 +709,7 @@ async def generate_project_sdlc(
         observations=derivation.observations,
         requirements_extracted=len(rows),
         unclear=[],
+        is_stale=False,
     )
 
 

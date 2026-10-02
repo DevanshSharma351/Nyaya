@@ -33,7 +33,7 @@ from nyaya.agents.schemas import (
 )
 from nyaya.config import ModelRole
 from nyaya.core.enums import DefectType, Severity
-from nyaya.llm import Message, get_provider
+from nyaya.llm import Message, Usage, get_provider
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +72,7 @@ class ExtractionResult:
     unclear: list[str] = field(default_factory=list)
     model: str = ""
     repair_rounds: int = 0
+    usage: Usage = field(default_factory=Usage)
 
     notes: list[str] = field(default_factory=list)
     """What the run could not do, stated rather than hidden.
@@ -215,6 +216,13 @@ async def extract(
     completion = await provider.complete_structured(messages, ExtractionOutput)
     output = completion.value
 
+    usage = Usage(
+        prompt_tokens=completion.completion.usage.prompt_tokens,
+        completion_tokens=completion.completion.usage.completion_tokens,
+        model=f"{provider.name}:{provider.model}",
+        role=role.value,
+    )
+
     requirements = list(output.requirements)
     unclear = list(output.unclear)
     analysed = [_analyse(r, text) for r in requirements]
@@ -243,6 +251,8 @@ async def extract(
                 repair_completion = await provider.complete_structured(
                     repair_messages, RepairOutput
                 )
+                usage.prompt_tokens += repair_completion.completion.usage.prompt_tokens
+                usage.completion_tokens += repair_completion.completion.usage.completion_tokens
             except Exception as exc:
                 # Repair is an enhancement, not a dependency.
                 #
@@ -312,6 +322,7 @@ async def extract(
         unclear=unclear,
         model=f"{provider.name}:{provider.model}",
         repair_rounds=rounds,
+        usage=usage,
         notes=notes,
     )
 

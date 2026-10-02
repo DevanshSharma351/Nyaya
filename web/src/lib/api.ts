@@ -127,6 +127,55 @@ export type ExtractedRequirement = {
   defects: Defect[];
 };
 
+export type UsageInfo = {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  cost_usd: number;
+};
+
+export type LLMCallEvent = {
+  occurred_at: string;
+  actor: string;
+  agent: string;
+  model: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  cost_usd: number;
+  repair_rounds: number;
+};
+
+export type AgentUsage = {
+  agent: string;
+  calls: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  cost_usd: number;
+};
+
+export type ModelUsage = {
+  model: string;
+  calls: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  cost_usd: number;
+};
+
+export type ProjectUsage = {
+  project_id: string;
+  total_calls: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  total_cost_usd: number;
+  by_agent: AgentUsage[];
+  by_model: ModelUsage[];
+  events: LLMCallEvent[];
+};
+
 export type ExtractResult = {
   /** The persisted project ID — pass to downstream generate endpoints. */
   project_id: string;
@@ -137,6 +186,7 @@ export type ExtractResult = {
   testable_fraction: number;
   unclear: string[];
   requirements: ExtractedRequirement[];
+  usage?: UsageInfo;
 };
 
 export type ControlCoverage = {
@@ -252,6 +302,7 @@ export type SDLCFromBrief = {
   requirements_extracted: number;
   unclear: string[];
   workflow: Workflow;
+  is_stale?: boolean;
 };
 
 export type Project = {
@@ -369,4 +420,25 @@ export const api = {
     request<Coverage[]>(`/projects/${encodeURIComponent(projectId)}/coverage/generate`, {
       method: "POST",
     }),
+  projectUsage: (projectId: string) =>
+    request<ProjectUsage>(`/projects/${encodeURIComponent(projectId)}/usage`),
+  updateRequirement: (
+    projectId: string,
+    reqId: string,
+    patch: {
+      statement?: string;
+      priority?: string;
+      risk_level?: string;
+      categories?: string[];
+      acceptance_criteria?: string[];
+      business_justification?: string;
+    },
+  ) =>
+    request<ExtractedRequirement>(
+      `/projects/${encodeURIComponent(projectId)}/requirements/${encodeURIComponent(reqId)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(patch),
+      },
+    ),
 };

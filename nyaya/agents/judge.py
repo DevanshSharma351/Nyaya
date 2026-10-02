@@ -55,13 +55,13 @@ constraint applied to the proposing model, doing the same work.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from pydantic import BaseModel, Field
 
 from nyaya.config import ModelRole
 from nyaya.core.enums import EvidenceRelation
-from nyaya.llm import Message, get_provider
+from nyaya.llm import Message, Usage, get_provider
 
 JUDGE_SYSTEM = """\
 You decide whether a regulatory clause obliges a software requirement.
@@ -132,6 +132,7 @@ class JudgeResult:
     reasoning: str
     quote_verified: bool
     raw_verdict: str
+    usage: Usage = field(default_factory=Usage)
 
     @property
     def obliges(self) -> bool:
@@ -193,12 +194,20 @@ async def judge(
     haystack = " ".join(clause_text.split()).lower()
     quote_verified = bool(quoted) and quoted in haystack
 
+    usage = Usage(
+        prompt_tokens=completion.completion.usage.prompt_tokens,
+        completion_tokens=completion.completion.usage.completion_tokens,
+        model=f"{provider.name}:{provider.model}",
+        role=role.value,
+    )
+
     return JudgeResult(
         relation=relation,
         obliging_text=value.obliging_text,
         reasoning=value.reasoning,
         quote_verified=quote_verified,
         raw_verdict=value.verdict,
+        usage=usage,
     )
 
 
