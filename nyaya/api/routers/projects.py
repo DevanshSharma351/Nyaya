@@ -273,7 +273,11 @@ class _FakeAnalysed:
 
 
 def _db_to_analysed(rows: list[Requirement]) -> list[_FakeAnalysed]:
-    """Convert persisted Requirement rows into the shape build_artefacts expects."""
+    """Convert persisted Requirement rows into the shape build_artefacts expects.
+
+    Defects must be eagerly loaded (selectinload) before calling this function,
+    otherwise async SQLAlchemy will raise a MissingGreenlet error.
+    """
     items = []
     for r in rows:
         cats = []
@@ -282,6 +286,10 @@ def _db_to_analysed(rows: list[Requirement]) -> list[_FakeAnalysed]:
                 cats.append(RequirementCategory(c))
             except ValueError:
                 pass
+
+        # Defects are eagerly loaded by _load_requirements; access is safe here.
+        db_defects = list(r.defects) if r.defects else []
+
         items.append(_FakeAnalysed(
             requirement=_FakeExtracted(
                 statement=r.statement,
@@ -294,20 +302,24 @@ def _db_to_analysed(rows: list[Requirement]) -> list[_FakeAnalysed]:
             ),
             defects=[
                 _FakeDefect(detail=d.detail, defect_type=str(d.defect_type), severity=str(d.severity))
-                for d in (r.defects if hasattr(r, 'defects') and r.defects else [])
+                for d in db_defects
             ],
         ))
     return items
 
 
 async def _load_requirements(session: AsyncSession, project_id: uuid.UUID) -> list[Requirement]:
-    """Load a project's requirements, raising 404 if the project doesn't exist."""
+    """Load a project's requirements with defects eagerly loaded.
+
+    Raises 404 if the project doesn't exist or has no requirements.
+    """
     project = await session.get(Project, project_id)
     if project is None:
         raise HTTPException(404, "project not found")
     rows = (
         await session.execute(
             select(Requirement)
+            .options(selectinload(Requirement.defects))
             .where(Requirement.project_id == project_id)
             .order_by(Requirement.ref)
         )
