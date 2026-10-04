@@ -1,16 +1,17 @@
 "use client";
 
 /**
- * Coverage — which mandatory controls nothing covers.
+ * Coverage — which mandatory statutory controls nothing covers.
  *
- * The gap list is the output. A list of satisfied controls is reassurance, and
- * reassurance is not what anyone opens a compliance tool for, so the gaps are
- * ordered first and the ratio is deliberately not the headline.
+ * Connected to project database: Automatically loads coverage evaluation
+ * for the selected project's requirements against statutory packs (e.g. RBI eKYC, GDPR).
  */
 
 import dynamic from "next/dynamic";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { RefreshCw, ShieldCheck, Sparkles } from "lucide-react";
 import { Block, ModuleShell, Rationale } from "@/components/chrome/ModuleShell";
+import { ProjectSelector } from "@/components/chrome/ProjectSelector";
 import { useJob } from "@/components/chrome/Jobs";
 import { Badge, Button, Empty, Failure, Ring } from "@/components/ui";
 import { api, type Coverage } from "@/lib/api";
@@ -19,30 +20,75 @@ const CoverageLayer = dynamic(() => import("@/components/scenes/CoverageLayer"),
   ssr: false,
 });
 
-const SEED = [
-  "The system shall screen the customer against the designated-persons list before activation.",
-  "The system shall retain customer identification records for five years from cessation.",
-  "The system shall verify the customer identity using officially valid documents.",
-  "The system shall encrypt customer information transmitted over public networks.",
-].join("\n");
-
 function tone(control: { is_gap: boolean; severity: string }) {
   if (!control.is_gap) return "var(--confirmed)";
   return control.severity === "blocker" ? "var(--gap)" : "var(--review)";
 }
 
 export default function CoveragePage() {
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [projectReport, setProjectReport] = useState<Coverage | null>(null);
+  const [projectLoading, setProjectLoading] = useState(false);
+  const [projectError, setProjectError] = useState<string | null>(null);
+  const [showCustomPrompt, setShowCustomPrompt] = useState(false);
+
+  // Ad-hoc job runner
   const { job, run: runJob } = useJob<Coverage | null>("coverage");
+  const [customText, setCustomText] = useState(job.input ?? "");
 
-  const report = job.result ?? null;
-  const error = job.error ?? null;
-  const busy = job.state === "running";
-  const [text, setText] = useState(job.input ?? SEED);
+  const loadCoverageForProject = useCallback(async (id: string) => {
+    setProjectLoading(true);
+    setProjectError(null);
+    try {
+      const reports = await api.generateCoverage(id);
+      const first = reports[0] ?? null;
+      setProjectReport(first);
+      sessionStorage.setItem("nyaya_project_id", id);
+      setSelectedProjectId(id);
+    } catch (err: unknown) {
+      setProjectError((err as Error).message || "Failed to generate coverage for project");
+    } finally {
+      setProjectLoading(false);
+    }
+  }, []);
 
-  async function run(value: string) {
+  // On mount: check sessionStorage or first project
+  useEffect(() => {
+    let cancelled = false;
+    const saved = typeof window !== "undefined" ? sessionStorage.getItem("nyaya_project_id") : null;
+    if (saved) {
+      queueMicrotask(() => {
+        if (!cancelled) {
+          setSelectedProjectId(saved);
+          loadCoverageForProject(saved);
+        }
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    api.projects().then((list) => {
+      if (cancelled || list.length === 0) return;
+      const firstId = list[0].id;
+      setSelectedProjectId(firstId);
+      loadCoverageForProject(firstId);
+    }).catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [loadCoverageForProject]);
+
+  const handleSelectProject = (id: string) => {
+    loadCoverageForProject(id);
+  };
+
+  async function runCustom() {
+    if (!customText.trim()) return;
     await runJob(
-      value,
-      async () => (await api.coverage(value))[0] ?? null,
+      customText,
+      async () => (await api.coverage(customText))[0] ?? null,
       (first) =>
         first
           ? {
@@ -54,16 +100,9 @@ export default function CoveragePage() {
     );
   }
 
-  // Seeded once, and only when the module has no job - otherwise returning
-  // here would discard whatever the reader had assessed.
-  const untouched = job.state === "idle";
-  useEffect(() => {
-    if (!untouched) return;
-    queueMicrotask(() => {
-      void run(SEED);
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [untouched]);
+  const report: Coverage | null = projectReport ?? job.result ?? null;
+  const busy = projectLoading || job.state === "running";
+  const error = projectError ?? job.error ?? null;
 
   const gaps = report?.controls.filter((c) => c.is_gap) ?? [];
   const covered = report?.controls.filter((c) => !c.is_gap) ?? [];
@@ -71,87 +110,118 @@ export default function CoveragePage() {
   return (
     <ModuleShell
       pathname="/coverage"
-      eyebrow="Coverage"
-      title="Which mandatory controls nothing covers"
-      lede="Every control in the pack cites the clause that establishes it — one without a citation is rejected before the pack loads."
+      eyebrow="Compliance Coverage"
+      title="Statutory Control Pack Coverage"
+      lede="Every control in the pack cites the statutory clause that establishes it. Gaps represent mandatory regulatory obligations that lack adequate requirement coverage."
       scene={<CoverageLayer controls={report?.controls ?? null} />}
-      sceneCaption="Your requirements are the column on the left; the control pack is the grid on the right. A line means a requirement satisfies a control. A control is a gap for exactly one reason — nothing points at it — so the gaps are the rings with no thread reaching them, red for a blocker and amber for a major. The ratio below tells you how many; this tells you why, and shows whether the unreached controls cluster in one area of the pack or scatter across it. That is the difference between one piece of work and twelve."
+      sceneCaption="Your requirements are the column on the left; the control pack is the grid on the right. Red nodes represent blocking gaps; amber represents major gaps; green indicates satisfied controls."
     >
+      {/* Unified Project Selector Bar */}
       <Block>
-        <div className="glass-raised specular p-6 lg:p-8">
-          <label className="caption mb-2 block">
-            Requirements to assess, one per line
-          </label>
-          <textarea
-            value={text}
-            onChange={(event) => setText(event.target.value)}
-            rows={4}
-            className="body w-full"
-            style={{
-              background: "var(--glass)",
-              border: "1px solid var(--hairline)",
-              borderRadius: 12,
-              padding: "12px 15px",
-              color: "var(--text)",
-              outline: "none",
-              resize: "vertical",
-            }}
-          />
-          <div className="mt-4 flex flex-wrap items-center gap-3">
-            <Button onClick={() => run(text)} disabled={busy || !text.trim()}>
-              {busy ? "Assessing…" : "Assess coverage"}
-            </Button>
-            {report && (
-              <div className="flex items-center gap-5">
-                <Ring
-                  value={report.coverage_ratio}
-                  size={78}
-                  tone={
-                    report.coverage_ratio > 0.7
-                      ? "var(--confirmed)"
-                      : report.coverage_ratio > 0.4
-                        ? "var(--review)"
-                        : "var(--gap)"
-                  }
-                />
-                <div>
-                  <div className="mono" style={{ color: "var(--gap)" }}>
-                    {report.blocking_gaps.length} blocking
-                  </div>
-                  <div className="caption">
-                    {report.pack} · v{report.pack_version}
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
+        <ProjectSelector
+          activeModule="coverage"
+          currentProjectId={selectedProjectId}
+          onSelectProject={handleSelectProject}
+        />
       </Block>
 
-      {error && <Failure message={error} />}
-      {!error && !report && <Empty>Assessing…</Empty>}
+      {/* Coverage Status Summary */}
+      {report && (
+        <Block>
+          <div className="glass-raised p-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+            <div className="flex items-center gap-6">
+              <Ring
+                value={report.coverage_ratio}
+                size={84}
+                tone={
+                  report.coverage_ratio > 0.7
+                    ? "var(--confirmed)"
+                    : report.coverage_ratio > 0.4
+                      ? "var(--review)"
+                      : "var(--gap)"
+                }
+              />
+              <div>
+                <div className="flex items-center gap-2">
+                  <ShieldCheck size={18} className="text-[var(--accent)]" />
+                  <span className="headline text-lg font-semibold">{report.pack}</span>
+                  <Badge tone="var(--clause)">v{report.pack_version}</Badge>
+                </div>
+                <div className="mt-1 flex flex-wrap items-center gap-3">
+                  <span className="mono font-bold" style={{ color: "var(--gap)" }}>
+                    {report.blocking_gaps.length} Blocking Gaps
+                  </span>
+                  <span className="caption text-[var(--text-secondary)]">&bull;</span>
+                  <span className="mono font-medium text-[var(--confirmed)]">
+                    {covered.length} Controls Covered
+                  </span>
+                  <span className="caption text-[var(--text-secondary)]">&bull;</span>
+                  <span className="caption text-[var(--text-secondary)]">
+                    {Math.round(report.coverage_ratio * 100)}% Overall Coverage
+                  </span>
+                </div>
+              </div>
+            </div>
 
+            <Button
+              variant="quiet"
+              onClick={() => selectedProjectId && loadCoverageForProject(selectedProjectId)}
+              disabled={busy}
+            >
+              <RefreshCw size={14} className={busy ? "animate-spin" : ""} />
+              Re-assess Coverage
+            </Button>
+          </div>
+        </Block>
+      )}
+
+      {error && (
+        <Block>
+          <Failure message={error} />
+        </Block>
+      )}
+
+      {busy && (
+        <Block>
+          <div className="glass p-5">
+            <div className="sheen" style={{ height: 10, borderRadius: 5 }} />
+            <div className="caption mt-3">
+              Evaluating requirements against statutory control pack…
+            </div>
+          </div>
+        </Block>
+      )}
+
+      {!busy && !error && !report && (
+        <Block>
+          <Empty>Select a project from the selector above to assess statutory control pack coverage.</Empty>
+        </Block>
+      )}
+
+      {/* Gaps List */}
       {gaps.length > 0 && (
-        <Block title={`Gaps — ${gaps.length}`}>
-          <div className="grid gap-2 sm:grid-cols-2">
+        <Block title={`Compliance Gaps (${gaps.length})`}>
+          <div className="grid gap-3 sm:grid-cols-2">
             {gaps.map((control, i) => (
               <div
                 key={control.control_id}
                 className="rise glass p-4"
                 style={{
-                  borderLeft: `2px solid ${tone(control)}`,
+                  borderLeft: `3px solid ${tone(control)}`,
                   animationDelay: `${Math.min(i * 0.02, 0.4)}s`,
                 }}
               >
-                <div className="mono mb-1" style={{ color: "var(--text)" }}>
-                  {control.control_id}
+                <div className="flex items-center justify-between mb-1">
+                  <span className="mono font-semibold" style={{ color: "var(--text)" }}>
+                    {control.control_id}
+                  </span>
+                  <Badge tone={tone(control)}>{control.severity.toUpperCase()}</Badge>
                 </div>
-                <div className="caption" style={{ lineHeight: 1.4 }}>
+                <div className="caption font-medium mb-2" style={{ lineHeight: 1.4 }}>
                   {control.title}
                 </div>
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  <Badge tone={tone(control)}>{control.severity}</Badge>
-                  {control.citations.slice(0, 1).map((citation) => (
+                <div className="flex flex-wrap gap-1.5">
+                  {control.citations.map((citation) => (
                     <Badge key={citation} tone="var(--clause)">
                       {citation}
                     </Badge>
@@ -163,38 +233,80 @@ export default function CoveragePage() {
         </Block>
       )}
 
+      {/* Covered Controls List */}
       {covered.length > 0 && (
-        <Block title={`Covered — ${covered.length}`}>
-          <div className="grid gap-2 sm:grid-cols-2">
+        <Block title={`Satisfied Controls (${covered.length})`}>
+          <div className="grid gap-3 sm:grid-cols-2">
             {covered.map((control) => (
               <div
                 key={control.control_id}
                 className="glass p-4"
-                style={{ borderLeft: "2px solid var(--confirmed)", opacity: 0.72 }}
+                style={{ borderLeft: "3px solid var(--confirmed)", opacity: 0.85 }}
               >
-                <div className="mono mb-1">{control.control_id}</div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="mono font-semibold text-[var(--confirmed)]">{control.control_id}</span>
+                  <Badge tone="var(--confirmed)">SATISFIED</Badge>
+                </div>
                 <div className="caption" style={{ lineHeight: 1.4 }}>
                   {control.title}
                 </div>
+                {control.citations.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {control.citations.map((citation) => (
+                      <Badge key={citation} tone="var(--clause)">
+                        {citation}
+                      </Badge>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
           </div>
         </Block>
       )}
 
+      {/* Rationale */}
       <Block>
         <Rationale>
           A control is only a gap when nothing in the submitted requirements
           satisfies its condition — the pack separates <span className="mono">
           applies_when</span> from <span className="mono">satisfied_when</span> so
-          a control that does not apply is not counted as covered either. Twelve
-          of the twenty-one are blockers. The mapping that decides satisfaction
-          is the same two-signal agreement gate used for citations, and it
-          returns <span className="mono">needs_review</span> far more often than
-          it returns a decision, which is the intended behaviour: an
-          automatically cleared control that was not really covered is the most
-          expensive output this system could produce.
+          a control that does not apply is not counted as covered either.
+          The mapping that decides satisfaction uses strict verification rules,
+          ensuring unverified requirements are not prematurely declared compliant.
         </Rationale>
+      </Block>
+
+      {/* Ad-hoc Custom Input Accordion */}
+      <Block>
+        <div className="mt-4 pt-4 border-t border-[var(--hairline)]">
+          <button
+            type="button"
+            onClick={() => setShowCustomPrompt(!showCustomPrompt)}
+            className="caption text-[var(--text-tertiary)] hover:text-[var(--text)] inline-flex items-center gap-1.5 transition-colors"
+          >
+            <Sparkles size={13} />
+            {showCustomPrompt ? "Hide Custom Text Evaluator" : "Evaluate Ad-Hoc Text (Custom Input Mode)"}
+          </button>
+
+          {showCustomPrompt && (
+            <div className="glass-raised p-6 mt-3 rounded-xl border border-[var(--hairline)]">
+              <label className="caption mb-2 block font-medium">Requirements to assess (one per line):</label>
+              <textarea
+                value={customText}
+                onChange={(event) => setCustomText(event.target.value)}
+                rows={4}
+                placeholder="The system shall screen the customer against the designated-persons list before activation.&#10;The system shall retain customer identification records for five years from cessation."
+                className="body w-full rounded-xl border border-[var(--hairline)] bg-[var(--bg-inset)] p-3 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--focus)]"
+              />
+              <div className="mt-3 flex items-center gap-3">
+                <Button onClick={runCustom} disabled={busy || !customText.trim()}>
+                  {busy ? "Assessing…" : "Assess Custom Text"}
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
       </Block>
     </ModuleShell>
   );

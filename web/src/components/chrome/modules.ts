@@ -71,12 +71,6 @@ export const MODULES: Module[] = [
     question: "Which SDLC fits this project, and why?",
   },
   {
-    href: "/impact",
-    icon: "activity",
-    name: "Impact",
-    question: "The regulator amended it — what is now wrong?",
-  },
-  {
     href: "/history",
     icon: "history",
     name: "History",

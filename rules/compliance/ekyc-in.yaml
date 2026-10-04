@@ -185,7 +185,7 @@ controls:
 
   - id: KYC.SECURITY.ENCRYPTION
     title: Encrypt customer information in transit and at rest
-    citations: ["RBI-MD-KYC:27(b)", "GDPR:Article 32.1(a)"]
+    citations: ["RBI-MD-KYC:27(b)", "RBI-CyberSecurity:4.2", "GDPR:Article 32.1(a)"]
     severity: blocker
     tags: [security]
     applies_when:

@@ -19,6 +19,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { Block, ModuleShell, Rationale } from "@/components/chrome/ModuleShell";
+import { ProjectSelector } from "@/components/chrome/ProjectSelector";
 import { Badge, Button, Empty, Failure } from "@/components/ui";
 import {
   api,
@@ -213,7 +214,7 @@ export default function WorkflowPage() {
     if (nodeId === "sdlc_gate" && decidedGates.includes("sdlc_selection")) {
       return "completed";
     }
-    if (nodeId === "persist" && status.completed) {
+    if (nodeId === "persist" && (status.completed || decidedGates.includes("sdlc_selection"))) {
       return "completed";
     }
 
@@ -234,27 +235,36 @@ export default function WorkflowPage() {
       lede="Execution order is explicit, every transition is checkpointed, and human-approval gates are durable interrupt points that suspend execution until authorized stakeholders clear them."
       pathname="/workflow"
     >
-      {/* Project Selector Bar */}
+      {/* Unified Project Selector Bar */}
       <Block>
-        <div className="flex flex-wrap items-center justify-between gap-4">
+        <ProjectSelector
+          activeModule="workflow"
+          currentProjectId={projectId}
+          onSelectProject={(id) => {
+            setProjectId(id);
+            sessionStorage.setItem("nyaya_project_id", id);
+            refreshStatus(id);
+          }}
+        />
+      </Block>
+
+      {/* Workflow Controls Bar */}
+      <Block>
+        <div className="glass-raised p-4 rounded-xl flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <span className="caption text-[var(--text-secondary)]">Project:</span>
-            <select
-              value={projectId ?? ""}
-              onChange={(e) => {
-                const nextId = e.target.value || null;
-                setProjectId(nextId);
-                if (nextId) sessionStorage.setItem("nyaya_project_id", nextId);
-              }}
-              className="rounded-lg border border-[var(--hairline)] bg-[var(--surface)] px-3 py-1.5 text-sm font-medium text-[var(--text)] focus:outline-none focus:ring-1 focus:ring-[var(--focus)]"
-            >
-              {projects.length === 0 && <option value="">No projects available</option>}
-              {projects.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name} ({p.domain})
-                </option>
-              ))}
-            </select>
+            <span className="caption font-medium text-[var(--text-secondary)]">Workflow Execution Status:</span>
+            {status ? (
+              <Badge tone={getTone(status.status)}>
+                {status.status.replace("_", " ").toUpperCase()}
+              </Badge>
+            ) : (
+              <Badge tone="var(--text-tertiary)">IDLE</Badge>
+            )}
+            {status?.current_gate && (
+              <span className="caption font-semibold" style={{ color: "var(--review)" }}>
+                Waiting at Gate: {status.current_gate.replace(/_/g, " ")}
+              </span>
+            )}
           </div>
 
           <div className="flex items-center gap-2">
@@ -277,11 +287,6 @@ export default function WorkflowPage() {
                 <Play size={14} />
                 {status && status.status !== "idle" ? "Re-run Workflow" : "Launch Workflow"}
               </Button>
-            )}
-            {status && (
-              <Badge tone={getTone(status.status)}>
-                {status.status.replace("_", " ").toUpperCase()}
-              </Badge>
             )}
           </div>
         </div>

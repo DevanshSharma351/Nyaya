@@ -370,6 +370,32 @@ export type GraphEdge = {
 
 export type Graph = { nodes: GraphNode[]; edges: GraphEdge[] };
 
+export type ProjectRequirementOut = {
+  id: string;
+  ref: string;
+  statement: string;
+  categories: string[];
+  priority: string;
+  risk_level: string;
+  approval_status: string;
+  confidence: number | null;
+  acceptance_criteria: string[];
+  defects: {
+    defect_type: string;
+    severity: string;
+    detail: string;
+    detector: string;
+  }[];
+  evidence: {
+    cited_key: string;
+    quoted_text: string;
+    relation: string;
+    entailment_score: number | null;
+    rerank_score: number | null;
+    resolved: boolean;
+  }[];
+};
+
 export const api = {
   health: () => request<Health>("/health"),
   documents: () => request<SourceDocument[]>("/knowledge/documents"),
@@ -421,7 +447,7 @@ export const api = {
   deleteProject: (id: string) =>
     request<void>(`/projects/${encodeURIComponent(id)}`, { method: "DELETE" }),
   projectRequirements: (id: string) =>
-    request<ExtractedRequirement[]>(`/projects/${encodeURIComponent(id)}/requirements`),
+    request<ProjectRequirementOut[]>(`/projects/${encodeURIComponent(id)}/requirements`),
   projectSdlc: (id: string) => request<SDLCFromBrief>(`/projects/${encodeURIComponent(id)}/sdlc`),
 
   // Project-based generate endpoints — zero LLM calls, instant results

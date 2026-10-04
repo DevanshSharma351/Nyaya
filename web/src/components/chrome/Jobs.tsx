@@ -87,8 +87,7 @@ export function useJobs(): Store {
 const IDLE_JOB: Job<unknown> = Object.freeze({ state: "idle" });
 
 export function useJob<T>(key: string) {
-  const store = useJobs();
-  const { jobs, start, clear } = store;
+  const { jobs, start, setResult: storeSetResult, clear: storeClear } = useJobs();
   const job = (jobs[key] ?? IDLE_JOB) as Job<T>;
 
   const run = useCallback(
@@ -110,17 +109,19 @@ export function useJob<T>(key: string) {
 
   const setResult = useCallback(
     (input: string, result: T, describe: (result: T) => { label: string; detail?: string }) => {
-      store.setResult(
+      storeSetResult(
         key,
         input,
         result,
         describe as unknown as (result: never) => { label: string; detail?: string }
       );
     },
-    [key, store]
+    [key, storeSetResult]
   );
 
-  return { job, run, setResult, clear: useCallback(() => clear(key), [clear, key]) };
+  const clear = useCallback(() => storeClear(key), [key, storeClear]);
+
+  return { job, run, setResult, clear };
 }
 
 export function JobsProvider({ children }: { children: ReactNode }) {

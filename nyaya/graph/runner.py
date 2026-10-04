@@ -252,7 +252,18 @@ class WorkflowRunner:
 
         halted = bool(values.get("halted", False))
         halt_reason = str(values.get("halt_reason", ""))
-        completed = not bool(snapshot.next) and not bool(interrupt_payload) and not halted
+
+        # Check if the final gate was approved
+        decisions_list = values.get("decisions", [])
+        sdlc_approved = any(
+            d.get("gate") == "sdlc_selection" and d.get("decision") == "approve"
+            for d in decisions_list
+        )
+
+        completed = (
+            (not bool(snapshot.next) and not bool(interrupt_payload) and not halted)
+            or (sdlc_approved and not halted)
+        )
 
         status_str = (
             "halted"

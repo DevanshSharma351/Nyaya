@@ -3,22 +3,22 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
+  FileText,
   FolderGit2,
   GitBranch,
   ListChecks,
   Plus,
   Search,
+  ShieldCheck,
   Trash2,
   Workflow,
   RefreshCw,
 } from "lucide-react";
 import { Block, ModuleShell } from "@/components/chrome/ModuleShell";
 import { Badge, Button, Empty, Failure } from "@/components/ui";
-import { api, type Project, type SDLCFromBrief } from "@/lib/api";
-import { useJobs } from "@/components/chrome/Jobs";
+import { api, type Project } from "@/lib/api";
 
 export default function HistoryPage() {
-  const { setResult } = useJobs();
   const router = useRouter();
 
   const [projects, setProjects] = useState<Project[]>([]);
@@ -77,39 +77,24 @@ export default function HistoryPage() {
     router.push("/requirements");
   };
 
+  const handleOpenArtefacts = (project: Project) => {
+    sessionStorage.setItem("nyaya_project_id", project.id);
+    router.push("/artefacts");
+  };
+
+  const handleOpenCoverage = (project: Project) => {
+    sessionStorage.setItem("nyaya_project_id", project.id);
+    router.push("/coverage");
+  };
+
+  const handleOpenLifecycle = (project: Project) => {
+    sessionStorage.setItem("nyaya_project_id", project.id);
+    router.push("/lifecycle");
+  };
+
   const handleOpenWorkflow = (project: Project) => {
     sessionStorage.setItem("nyaya_project_id", project.id);
     router.push("/workflow");
-  };
-
-  const handleOpenLifecycle = async (project: Project) => {
-    setActionLoadingId(project.id);
-    setError(null);
-    try {
-      const sdlc = await api.projectSdlc(project.id);
-
-      setResult(
-        "lifecycle",
-        project.description || project.name,
-        sdlc,
-        (result: SDLCFromBrief) => {
-          const title =
-            result.workflow.phases.length > 0
-              ? `${result.recommendation.recommended} (${result.workflow.phases.length} phases)`
-              : result.recommendation.recommended;
-          return {
-            label: title,
-            detail: `${result.requirements_extracted} requirements`,
-          };
-        }
-      );
-
-      router.push("/lifecycle");
-    } catch (err: unknown) {
-      setError((err as Error)?.message || "Failed to load SDLC assessment for this project");
-    } finally {
-      setActionLoadingId(null);
-    }
   };
 
   const handleDelete = async (e: React.MouseEvent, projectId: string) => {
@@ -242,21 +227,38 @@ export default function HistoryPage() {
 
                       <button
                         type="button"
-                        onClick={() => handleOpenWorkflow(p)}
+                        onClick={() => handleOpenArtefacts(p)}
                         className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--hairline)] bg-[var(--surface-raised)] px-3 py-1.5 text-xs font-medium text-[var(--text)] hover:bg-[var(--surface)] hover:border-[var(--text-secondary)] transition-colors"
                       >
-                        <Workflow size={13} />
-                        Workflow &amp; Gates
+                        <FileText size={13} />
+                        SRS Artefacts
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleOpenCoverage(p)}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--hairline)] bg-[var(--surface-raised)] px-3 py-1.5 text-xs font-medium text-[var(--text)] hover:bg-[var(--surface)] hover:border-[var(--text-secondary)] transition-colors"
+                      >
+                        <ShieldCheck size={13} />
+                        Coverage
                       </button>
 
                       <button
                         type="button"
                         onClick={() => handleOpenLifecycle(p)}
-                        disabled={isActionBusy}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--accent)]/40 bg-[var(--accent)]/10 px-3 py-1.5 text-xs font-medium text-[var(--accent)] hover:bg-[var(--accent)]/20 transition-colors disabled:opacity-50"
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--accent)]/40 bg-[var(--accent)]/10 px-3 py-1.5 text-xs font-medium text-[var(--accent)] hover:bg-[var(--accent)]/20 transition-colors"
                       >
                         <GitBranch size={13} />
-                        {isActionBusy ? "Loading SDLC…" : "SDLC Model"}
+                        SDLC Model
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleOpenWorkflow(p)}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--hairline)] bg-[var(--surface-raised)] px-3 py-1.5 text-xs font-medium text-[var(--text)] hover:bg-[var(--surface)] hover:border-[var(--text-secondary)] transition-colors"
+                      >
+                        <Workflow size={13} />
+                        Workflow &amp; Gates
                       </button>
 
                       {isConfirmingDelete ? (

@@ -200,11 +200,12 @@ export function DynamicIsland({
           <AnimatePresence mode="popLayout" initial={false}>
             <motion.div
               key={state.size}
-              initial={{ opacity: 0, scale: 0.94, filter: "blur(3px)" }}
-              animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
-              exit={{ opacity: 0, scale: 0.94, filter: "blur(3px)" }}
+              initial={{ opacity: 0, scale: 0.94 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.94 }}
               transition={calm ? { duration: 0 } : { duration: 0.22 }}
               className="h-full w-full"
+              style={{ willChange: "opacity, transform" }}
             >
               {children}
             </motion.div>

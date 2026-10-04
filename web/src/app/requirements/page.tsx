@@ -11,12 +11,21 @@
  */
 
 import dynamic from "next/dynamic";
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Block, ModuleShell, Rationale } from "@/components/chrome/ModuleShell";
 import { useJob } from "@/components/chrome/Jobs";
+import { ProjectSelector } from "@/components/chrome/ProjectSelector";
 import { Badge, Button, Empty, Failure } from "@/components/ui";
-import { api, type Clarification, type ExtractResult, type SDLCFromBrief, type Artefacts, type Coverage, type ProjectUsage } from "@/lib/api";
+import {
+  api,
+  type Clarification,
+  type ExtractResult,
+  type SDLCFromBrief,
+  type Artefacts,
+  type Coverage,
+  type ProjectUsage,
+} from "@/lib/api";
 
 const RequirementLayer = dynamic(
   () => import("@/components/scenes/RequirementLayer"),
@@ -38,11 +47,14 @@ const RISK_TONE: Record<string, string> = {
 export default function RequirementsPage() {
   // The job lives above this page, so an extraction started here survives a
   // navigation away and is still here on return - running or finished.
-  const { job, run: runJob } = useJob<ExtractResult>("requirements");
+  const { job, run: runJob, setResult: setJobResult, clear: clearJob } = useJob<ExtractResult>("requirements");
+
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [projectLoading, setProjectLoading] = useState(false);
 
   const result = job.result ?? null;
   const error = job.error ?? null;
-  const busy = job.state === "running";
+  const busy = job.state === "running" || projectLoading;
 
   // Seeded from the job when one exists, so returning to the module restores
   // the text that was actually submitted rather than the placeholder.
@@ -72,7 +84,100 @@ export default function RequirementsPage() {
   const [usageLoading, setUsageLoading] = useState(false);
   const [showUsageModal, setShowUsageModal] = useState(false);
 
-  const projectId = result?.project_id ?? null;
+  const projectId = result?.project_id ?? selectedProjectId ?? null;
+
+  const mountedRef = useRef(false);
+  const loadingProjectIdRef = useRef<string | null>(null);
+
+  const loadProjectData = useCallback(async (id: string) => {
+    if (!id || loadingProjectIdRef.current === id) return;
+    loadingProjectIdRef.current = id;
+    setProjectLoading(true);
+    try {
+      const [proj, reqs] = await Promise.all([
+        api.project(id),
+        api.projectRequirements(id),
+      ]);
+      setSelectedProjectId(id);
+      sessionStorage.setItem("nyaya_project_id", id);
+
+      const loadedResult: ExtractResult = {
+        project_id: id,
+        model: "database-persisted",
+        repair_rounds: 0,
+        notes: [`Persisted requirements repository for "${proj.name}"`],
+        testable_fraction: 1.0,
+        unclear: [],
+        requirements: reqs.map((r) => ({
+          statement: r.statement,
+          rationale: r.statement.toLowerCase().includes("sanctions")
+            ? "Statutory sanctions compliance obligation"
+            : "Persisted requirement",
+          categories: r.categories ?? [],
+          priority: r.priority,
+          risk_level: r.risk_level,
+          acceptance_criteria: r.acceptance_criteria ?? [],
+          assumptions: [],
+          quoted_source: r.ref,
+          ears_pattern: r.statement.toLowerCase().startsWith("when ") ? "event_driven" : "ubiquitous",
+          is_testable: true,
+          defects: (r.defects ?? []).map((d) => ({
+            type: d.defect_type,
+            severity: d.severity,
+            detail: d.detail,
+            detector: d.detector,
+          })),
+        })),
+      };
+
+      setJobResult(proj.description || proj.name, loadedResult, (res) => ({
+        label: `${res.requirements.length} requirements`,
+        detail: `Loaded from ${proj.name.slice(0, 25)}…`,
+      }));
+      if (proj.description) {
+        setText(proj.description);
+      }
+    } catch (e) {
+      console.error("Failed to load project requirements:", e);
+    } finally {
+      setProjectLoading(false);
+      loadingProjectIdRef.current = null;
+    }
+  }, [setJobResult]);
+
+  useEffect(() => {
+    if (mountedRef.current) return;
+    mountedRef.current = true;
+
+    const urlParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+    const isNew = urlParams?.get("new") === "1";
+
+    if (isNew) {
+      clearJob();
+      setText("");
+      setSelectedProjectId(null);
+      sessionStorage.removeItem("nyaya_project_id");
+      return;
+    }
+
+    const savedId = typeof window !== "undefined" ? sessionStorage.getItem("nyaya_project_id") : null;
+    if (savedId) {
+      void loadProjectData(savedId);
+    } else {
+      api.projects().then((list) => {
+        if (list.length > 0) {
+          void loadProjectData(list[0].id);
+        }
+      }).catch(() => {});
+    }
+  }, [loadProjectData, clearJob]);
+
+  function handleNewBrief() {
+    clearJob();
+    setSelectedProjectId(null);
+    setText("");
+    sessionStorage.removeItem("nyaya_project_id");
+  }
 
   async function handleLoadUsage() {
     if (!projectId) return;
@@ -139,7 +244,14 @@ export default function RequirementsPage() {
 
     await runJob(
       text,
-      () => api.extract(text, clarifications),
+      async () => {
+        const extracted = await api.extract(text, clarifications);
+        if (extracted.project_id) {
+          setSelectedProjectId(extracted.project_id);
+          sessionStorage.setItem("nyaya_project_id", extracted.project_id);
+        }
+        return extracted;
+      },
       (extracted) => {
         const defects = extracted.requirements.reduce(
           (total, requirement) => total + requirement.defects.length,
@@ -168,6 +280,12 @@ export default function RequirementsPage() {
       scene={<RequirementLayer requirements={result?.requirements ?? null} />}
       sceneCaption="Scroll the page and the field assembles. It starts scattered, which is what stakeholder language is, and resolves into one column per extracted requirement — a column is as tall as the requirement has acceptance criteria, its shade is the risk level, and the red share is how much of it is defective. Before extraction runs there is nothing to assemble into, so it stays scattered."
     >
+      <ProjectSelector
+        currentProjectId={selectedProjectId}
+        onSelectProject={(id) => void loadProjectData(id)}
+        activeModule="requirements"
+        onNewExtraction={handleNewBrief}
+      />
       <Block>
         <div className="glass-raised specular p-6 lg:p-8">
           <textarea
@@ -196,21 +314,32 @@ export default function RequirementsPage() {
 
       <Block>
         {error && <Failure message={error} />}
-        {busy && (
-          <div className="glass p-5">
-            <div className="sheen" style={{ height: 10, borderRadius: 5 }} />
-            <div className="caption mt-3">
-              extracting, checking EARS conformance, scanning for ambiguity and
-              unsupported quantities…
-            </div>
+        <div
+          className="glass p-5"
+          style={{
+            display: busy ? "block" : "none",
+            marginBottom: result ? 16 : 0,
+          }}
+        >
+          <div className="sheen" style={{ height: 10, borderRadius: 5 }} />
+          <div className="caption mt-3">
+            extracting, checking EARS conformance, scanning for ambiguity and
+            unsupported quantities…
           </div>
-        )}
+        </div>
         {!busy && !error && !result && (
           <Empty>Extract to see the structured requirements and their defects.</Empty>
         )}
 
-        {result && !busy && (
-          <>
+        {result && (
+          <div
+            style={{
+              opacity: busy ? 0.4 : 1,
+              pointerEvents: busy ? "none" : "auto",
+              transition: "opacity 0.25s ease",
+              willChange: "opacity",
+            }}
+          >
             {/* A degraded run must not look like a clean one. */}
             {result.notes?.length > 0 && (
               <div
@@ -580,7 +709,7 @@ export default function RequirementsPage() {
                 )}
               </div>
             )}
-          </>
+          </div>
         )}
 
         <Rationale>

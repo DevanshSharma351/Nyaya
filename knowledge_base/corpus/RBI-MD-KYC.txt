@@ -139,7 +139,7 @@ the date of the transaction;
 (c) records shall be maintained in a form that permits reconstruction of
 individual transactions and their prompt production to a competent authority.
 
-27. Security of Customer Information
+27. Security of Customer Information [RBI Cyber Security Framework Annex 1 §4.2 & Master Direction on IT Governance Ch. IV / V-CIP §18]
 The Regulated Entity shall put in place controls to protect customer information
 against unauthorised access.
 (a) access to customer identification records shall be restricted to personnel

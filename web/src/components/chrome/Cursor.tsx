@@ -114,8 +114,8 @@ export default function Cursor() {
     }
 
     function tick() {
-      disc.x += (target.x - disc.x) * 0.2;
-      disc.y += (target.y - disc.y) * 0.2;
+      disc.x += (target.x - disc.x) * 0.32;
+      disc.y += (target.y - disc.y) * 0.32;
       if (dotRef.current) {
         dotRef.current.style.transform = `translate3d(${target.x}px, ${target.y}px, 0) translate(-50%, -50%)`;
       }
@@ -159,6 +159,7 @@ export default function Cursor() {
 
   const style = RING[intent];
   const size = style.size * (pressed ? 0.85 : 1);
+  const isText = intent === "text";
   const base = {
     position: "fixed",
     top: 0,
@@ -178,8 +179,9 @@ export default function Cursor() {
           width: size,
           height: size,
           background: `rgba(9, 9, 11, ${style.alpha})`,
+          opacity: isText ? 0 : 1,
           transition:
-            "width 0.28s cubic-bezier(0.16,1,0.3,1), height 0.28s cubic-bezier(0.16,1,0.3,1), background 0.28s",
+            "width 0.22s cubic-bezier(0.16,1,0.3,1), height 0.22s cubic-bezier(0.16,1,0.3,1), background 0.22s, opacity 0.15s ease",
         }}
       />
       <div
@@ -190,8 +192,8 @@ export default function Cursor() {
           width: 4,
           height: 4,
           background: "var(--text)",
-          opacity: intent === "text" ? 0 : 1,
-          transition: "opacity 0.2s",
+          opacity: isText ? 0 : 1,
+          transition: "opacity 0.15s ease",
         }}
       />
     </>

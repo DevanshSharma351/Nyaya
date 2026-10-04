@@ -79,7 +79,6 @@
 
 html {
   background: var(--bg);
-  scroll-behavior: smooth;
   color-scheme: light;
 }
 
@@ -206,7 +205,9 @@ body {
   z-index: var(--z-scene);
   pointer-events: none;
 }
-.scene-layer canvas { pointer-events: auto; }
+/* The ambient canvas must not capture scroll/wheel events. Only the bounded
+   scene-panel canvases (inside the content flow) should be interactive. */
+.scene-layer canvas { pointer-events: none; }
 
 .scene-panel {
   position: relative;
@@ -227,7 +228,10 @@ body {
   height: 100%;
 }
 
-.content-layer { position: relative; z-index: var(--z-content); }
+.content-layer {
+  position: relative;
+  z-index: var(--z-content);
+}
 
 /* Content sits clear of the rail, and follows it when it collapses. The width
    is published by the rail itself as `--rail-width`; the fallback here is what
@@ -251,12 +255,18 @@ body {
 @media (pointer: fine) {
   body.has-custom-cursor,
   body.has-custom-cursor * { cursor: none !important; }
+
+  /* Preserve native text cursor inside inputs and textareas for effortless editing */
+  body.has-custom-cursor textarea,
+  body.has-custom-cursor input,
+  body.has-custom-cursor [contenteditable="true"] {
+    cursor: text !important;
+  }
 }
 
 /* Respect the system setting. Ambient motion is the first thing to go; the
    interface must remain fully usable without any of it. */
 @media (prefers-reduced-motion: reduce) {
-  html { scroll-behavior: auto; }
   *, *::before, *::after {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
