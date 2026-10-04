@@ -80,6 +80,7 @@ export default function LifecyclePage() {
   // hand-set one are different claims and should not overwrite each other
   // silently - the reader needs to know which of the two they are looking at.
   const { job, run: runJob } = useJob<SDLCFromBrief>("lifecycle");
+
   const derived = job.result ?? null;
   const derivingError = job.error ?? null;
   const deriving = job.state === "running";
@@ -87,7 +88,9 @@ export default function LifecyclePage() {
 
   useEffect(() => {
     if (job.input) {
-      setBrief(job.input);
+      queueMicrotask(() => {
+        setBrief(job.input!);
+      });
     }
   }, [job.input]);
 

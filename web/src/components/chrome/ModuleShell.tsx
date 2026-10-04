@@ -16,6 +16,7 @@ import { motion, useScroll, useSpring } from "motion/react";
 import type { ReactNode } from "react";
 import { neighbours } from "./modules";
 
+
 /**
  * The ambient field, on every module page.
  *

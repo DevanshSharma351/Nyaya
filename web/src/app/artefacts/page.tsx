@@ -54,6 +54,7 @@ const TABS: [Tab, string][] = [
 
 export default function ArtefactsPage() {
   const { job, run: runJob } = useJob<Artefacts>("artefacts");
+
   const result = job.result ?? null;
   const error = job.error ?? null;
   const busy = job.state === "running";

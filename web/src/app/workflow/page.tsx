@@ -8,7 +8,7 @@
  * gates with role-based competence enforcement, and tamper-evident audit trail.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -18,7 +18,6 @@ import {
   RefreshCw,
   XCircle,
 } from "lucide-react";
-import { useJob } from "@/components/chrome/Jobs";
 import { Block, ModuleShell, Rationale } from "@/components/chrome/ModuleShell";
 import { Badge, Button, Empty, Failure } from "@/components/ui";
 import {
@@ -42,9 +41,8 @@ const PIPELINE_NODES = [
 ];
 
 export default function WorkflowPage() {
-  const { job } = useJob("requirements");
-  const [projectId, setProjectId] = useState<string | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [projectId, setProjectId] = useState<string | null>(null);
   const [gates, setGates] = useState<GateSpec[]>([]);
   const [status, setStatus] = useState<WorkflowStatus | null>(null);
   const [approvals, setApprovals] = useState<Approval[]>([]);
@@ -57,26 +55,41 @@ export default function WorkflowPage() {
   const [selectedRole, setSelectedRole] = useState<string>("");
   const [comment, setComment] = useState("");
 
-  // Determine current active projectId from job or session storage
+  const selectedProject = useMemo(
+    () => projects.find((p) => p.id === projectId) ?? null,
+    [projects, projectId]
+  );
+
+  // Load gate specifications and projects once on mount
   useEffect(() => {
-    let resolvedId: string | null = null;
-    if (job.state === "done" && job.result && typeof job.result === "object" && "project_id" in job.result) {
-      resolvedId = (job.result as { project_id: string }).project_id;
-    }
-    if (!resolvedId && typeof window !== "undefined") {
-      resolvedId = sessionStorage.getItem("nyaya:active_project_id");
-    }
-    if (resolvedId) {
-      setProjectId(resolvedId);
-    }
+    let cancelled = false;
+    api.workflowGates().then((g) => {
+      if (!cancelled) setGates(g);
+    }).catch(() => {});
 
-    // Load available projects and gate specifications
-    api.projects().then(setProjects).catch(() => {});
-    api.workflowGates().then(setGates).catch(() => {});
-  }, [job]);
+    api.projects().then((list) => {
+      if (cancelled) return;
+      setProjects(list);
+      const savedId = typeof window !== "undefined" ? sessionStorage.getItem("nyaya_project_id") : null;
+      if (savedId && list.some((p) => p.id === savedId)) {
+        setProjectId(savedId);
+      } else if (list.length > 0) {
+        setProjectId(list[0].id);
+      }
+    }).catch(() => {});
 
-  // Load workflow status and approvals for active project
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Load workflow status and approvals for selected project
   const refreshStatus = useCallback(async (id: string) => {
+    if (!id) {
+      setStatus(null);
+      setApprovals([]);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -91,17 +104,34 @@ export default function WorkflowPage() {
       if (st.gate_payload?.required_roles?.length) {
         setSelectedRole(st.gate_payload.required_roles[0]);
       }
-    } catch (err: any) {
-      setError(err?.message || "Failed to load workflow state");
+    } catch (err: unknown) {
+      setStatus(null);
+      setApprovals([]);
+      setError((err as Error)?.message || "Failed to load workflow state");
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
     if (projectId) {
-      refreshStatus(projectId);
+      queueMicrotask(() => {
+        if (!cancelled) {
+          void refreshStatus(projectId);
+        }
+      });
+    } else {
+      queueMicrotask(() => {
+        if (!cancelled) {
+          setStatus(null);
+          setApprovals([]);
+        }
+      });
     }
+    return () => {
+      cancelled = true;
+    };
   }, [projectId, refreshStatus]);
 
   // Start / re-run workflow
@@ -113,8 +143,8 @@ export default function WorkflowPage() {
       const res = await api.startWorkflow(projectId);
       setStatus(res);
       await refreshStatus(projectId);
-    } catch (err: any) {
-      setError(err?.message || "Failed to start workflow");
+    } catch (err: unknown) {
+      setError((err as Error)?.message || "Failed to start workflow");
     } finally {
       setActionLoading(false);
     }
@@ -140,8 +170,8 @@ export default function WorkflowPage() {
       setStatus(res);
       setComment("");
       await refreshStatus(projectId);
-    } catch (err: any) {
-      setError(err?.message || "Decision rejected by gate authorization");
+    } catch (err: unknown) {
+      setError((err as Error)?.message || "Decision rejected by gate authorization");
     } finally {
       setActionLoading(false);
     }
@@ -208,15 +238,13 @@ export default function WorkflowPage() {
       <Block>
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <span className="caption text-[var(--text-secondary)]">Active Project:</span>
+            <span className="caption text-[var(--text-secondary)]">Project:</span>
             <select
               value={projectId ?? ""}
               onChange={(e) => {
-                const id = e.target.value;
-                setProjectId(id);
-                if (typeof window !== "undefined") {
-                  sessionStorage.setItem("nyaya:active_project_id", id);
-                }
+                const nextId = e.target.value || null;
+                setProjectId(nextId);
+                if (nextId) sessionStorage.setItem("nyaya_project_id", nextId);
               }}
               className="rounded-lg border border-[var(--hairline)] bg-[var(--surface)] px-3 py-1.5 text-sm font-medium text-[var(--text)] focus:outline-none focus:ring-1 focus:ring-[var(--focus)]"
             >
@@ -269,7 +297,14 @@ export default function WorkflowPage() {
         <>
           {/* Pipeline Visual Flow */}
           <Block>
-            <div className="text-sm font-medium mb-1 text-[var(--text)]">8-Layer Orchestration Pipeline</div>
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+              <div className="text-sm font-medium text-[var(--text)]">8-Layer Orchestration Pipeline</div>
+              {selectedProject && (
+                <div className="caption text-[var(--text-tertiary)]">
+                  Project: {selectedProject.name} • {gates.length > 0 ? `${gates.length} Gates Registered` : "7 Gates Active"}
+                </div>
+              )}
+            </div>
             <p className="caption mb-4 text-[var(--text-secondary)]">
               Explicit StateGraph execution with durable checkpoints. Execution suspends automatically at human-approval gates until a verified stakeholder role clears it.
             </p>
@@ -457,7 +492,7 @@ export default function WorkflowPage() {
                   <h4 className="font-semibold text-rose-200">Workflow Halted by Human Decision</h4>
                   <p className="mt-1 text-sm">{status.halt_reason}</p>
                   <p className="mt-2 text-xs text-rose-400">
-                    A rejection at an approval gate stops execution permanently for this thread. Requirements remain in DRAFT status. Click "Re-run Workflow" above to restart when ready.
+                    A rejection at an approval gate stops execution permanently for this thread. Requirements remain in DRAFT status. Click &ldquo;Re-run Workflow&rdquo; above to restart when ready.
                   </p>
                 </div>
               </div>

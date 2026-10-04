@@ -74,7 +74,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const detail = await response.text().catch(() => response.statusText);
     throw new Error(`${response.status}: ${detail.slice(0, 300)}`);
   }
-  return response.json() as Promise<T>;
+  if (response.status === 204) {
+    return undefined as unknown as T;
+  }
+  const text = await response.text();
+  if (!text || text.trim() === "") {
+    return undefined as unknown as T;
+  }
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return undefined as unknown as T;
+  }
 }
 
 export type Health = {
@@ -310,6 +321,7 @@ export type Project = {
   name: string;
   description?: string;
   domain: string;
+  jurisdictions?: string[];
   status: string;
   created_at: string;
   requirement_count: number;
@@ -405,6 +417,11 @@ export const api = {
     }),
   knowledgeGraph: () => request<Graph>("/graph/demo/knowledge"),
   projects: () => request<Project[]>("/projects"),
+  project: (id: string) => request<Project>(`/projects/${encodeURIComponent(id)}`),
+  deleteProject: (id: string) =>
+    request<void>(`/projects/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  projectRequirements: (id: string) =>
+    request<ExtractedRequirement[]>(`/projects/${encodeURIComponent(id)}/requirements`),
   projectSdlc: (id: string) => request<SDLCFromBrief>(`/projects/${encodeURIComponent(id)}/sdlc`),
 
   // Project-based generate endpoints — zero LLM calls, instant results
@@ -504,7 +521,7 @@ export type WorkflowStatus = {
     gate: string;
     description: string;
     required_roles: string[];
-    summary: Record<string, any>;
+    summary: Record<string, unknown>;
   } | null;
   halted: boolean;
   halt_reason: string;

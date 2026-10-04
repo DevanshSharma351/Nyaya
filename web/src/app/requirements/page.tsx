@@ -11,9 +11,8 @@
  */
 
 import dynamic from "next/dynamic";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { Block, ModuleShell, Rationale } from "@/components/chrome/ModuleShell";
 import { useJob } from "@/components/chrome/Jobs";
 import { Badge, Button, Empty, Failure } from "@/components/ui";
@@ -40,6 +39,7 @@ export default function RequirementsPage() {
   // The job lives above this page, so an extraction started here survives a
   // navigation away and is still here on return - running or finished.
   const { job, run: runJob } = useJob<ExtractResult>("requirements");
+
   const result = job.result ?? null;
   const error = job.error ?? null;
   const busy = job.state === "running";

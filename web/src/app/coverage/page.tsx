@@ -33,6 +33,7 @@ function tone(control: { is_gap: boolean; severity: string }) {
 
 export default function CoveragePage() {
   const { job, run: runJob } = useJob<Coverage | null>("coverage");
+
   const report = job.result ?? null;
   const error = job.error ?? null;
   const busy = job.state === "running";
@@ -58,7 +59,9 @@ export default function CoveragePage() {
   const untouched = job.state === "idle";
   useEffect(() => {
     if (!untouched) return;
-    void run(SEED);
+    queueMicrotask(() => {
+      void run(SEED);
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [untouched]);
 
@@ -94,7 +97,7 @@ export default function CoveragePage() {
               resize: "vertical",
             }}
           />
-          <div className="mt-4 flex flex-wrap items-center gap-5">
+          <div className="mt-4 flex flex-wrap items-center gap-3">
             <Button onClick={() => run(text)} disabled={busy || !text.trim()}>
               {busy ? "Assessing…" : "Assess coverage"}
             </Button>

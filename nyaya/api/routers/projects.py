@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -52,7 +52,22 @@ from nyaya.api.schemas import (
 )
 from nyaya.artefacts import build as build_artefacts
 from nyaya.core.enums import Priority, RequirementCategory, RiskLevel, StakeholderRole
-from nyaya.db.models import Approval, AuditEvent, Project, Requirement, SDLCAssessment, SDLCWorkflow
+from nyaya.db.models import (
+    Approval,
+    AuditEvent,
+    Conflict,
+    ControlMapping,
+    Defect,
+    Evidence,
+    Interview,
+    Project,
+    Requirement,
+    SDLCAssessment,
+    SDLCWorkflow,
+    Stakeholder,
+    TraceLink,
+    Utterance,
+)
 from nyaya.graph.gates import GATES, UnauthorisedApproverError
 from nyaya.graph.runner import get_workflow_runner
 from nyaya.mcda.derive import derive
@@ -264,6 +279,94 @@ async def get_project(project_id: uuid.UUID, session: AsyncSession = Depends(db_
     )
 
 
+@router.delete("/{project_id}", status_code=200)
+async def delete_project(project_id: uuid.UUID, session: AsyncSession = Depends(db_session)):
+    """Delete a project and all associated requirements, assessments, approvals, and trace links."""
+    project = await session.get(Project, project_id)
+    if project is None:
+        raise HTTPException(404, "project not found")
+
+    # 1. Gather all requirement IDs for this project
+    req_ids = (
+        await session.execute(
+            select(Requirement.id).where(Requirement.project_id == project_id)
+        )
+    ).scalars().all()
+
+    if req_ids:
+        await session.execute(
+            delete(ControlMapping).where(ControlMapping.requirement_id.in_(req_ids))
+        )
+        await session.execute(
+            delete(Conflict).where(
+                (Conflict.left_id.in_(req_ids)) | (Conflict.right_id.in_(req_ids))
+            )
+        )
+        await session.execute(
+            delete(Defect).where(Defect.requirement_id.in_(req_ids))
+        )
+        await session.execute(
+            delete(Evidence).where(Evidence.requirement_id.in_(req_ids))
+        )
+        await session.execute(
+            delete(Requirement).where(Requirement.project_id == project_id)
+        )
+
+    # 2. SDLC assessments and workflows
+    assessment_ids = (
+        await session.execute(
+            select(SDLCAssessment.id).where(SDLCAssessment.project_id == project_id)
+        )
+    ).scalars().all()
+    if assessment_ids:
+        await session.execute(
+            delete(SDLCWorkflow).where(SDLCWorkflow.assessment_id.in_(assessment_ids))
+        )
+        await session.execute(
+            delete(SDLCAssessment).where(SDLCAssessment.project_id == project_id)
+        )
+
+    # 3. Trace links, approvals, audit events
+    await session.execute(
+        delete(TraceLink).where(TraceLink.project_id == project_id)
+    )
+    await session.execute(
+        delete(Approval).where(Approval.project_id == project_id)
+    )
+    await session.execute(
+        delete(AuditEvent).where(AuditEvent.project_id == project_id)
+    )
+
+    # 4. Stakeholders, interviews, utterances
+    stakeholder_ids = (
+        await session.execute(
+            select(Stakeholder.id).where(Stakeholder.project_id == project_id)
+        )
+    ).scalars().all()
+    interview_ids = (
+        await session.execute(
+            select(Interview.id).where(Interview.project_id == project_id)
+        )
+    ).scalars().all()
+    if stakeholder_ids or interview_ids:
+        conditions = []
+        if stakeholder_ids:
+            conditions.append(Utterance.stakeholder_id.in_(stakeholder_ids))
+        if interview_ids:
+            conditions.append(Utterance.interview_id.in_(interview_ids))
+        await session.execute(delete(Utterance).where(or_(*conditions)))
+
+    if interview_ids:
+        await session.execute(delete(Interview).where(Interview.id.in_(interview_ids)))
+    if stakeholder_ids:
+        await session.execute(delete(Stakeholder).where(Stakeholder.id.in_(stakeholder_ids)))
+
+    # 5. Delete project row and commit
+    await session.delete(project)
+    await session.commit()
+    return {"ok": True, "id": str(project_id)}
+
+
 @router.get("/{project_id}/usage", response_model=ProjectUsageOut)
 async def get_project_usage(
     project_id: uuid.UUID, session: AsyncSession = Depends(db_session)
@@ -364,6 +467,10 @@ async def get_project_usage(
 
 @router.get("/{project_id}/sdlc", response_model=SDLCFromBriefOut)
 async def get_project_sdlc(project_id: uuid.UUID, session: AsyncSession = Depends(db_session)):
+    project = await session.get(Project, project_id)
+    if project is None:
+        raise HTTPException(404, "project not found")
+
     assessment = (
         await session.execute(
             select(SDLCAssessment)
@@ -374,7 +481,7 @@ async def get_project_sdlc(project_id: uuid.UUID, session: AsyncSession = Depend
     ).scalars().first()
 
     if not assessment:
-        raise HTTPException(404, "no SDLC assessment found for this project")
+        return await generate_project_sdlc(project_id=project_id, session=session)
 
     count = (
         await session.execute(
@@ -529,10 +636,12 @@ def _db_to_analysed(rows: list[Requirement]) -> list[_FakeAnalysed]:
     return items
 
 
-async def _load_requirements(session: AsyncSession, project_id: uuid.UUID) -> list[Requirement]:
+async def _load_requirements(
+    session: AsyncSession, project_id: uuid.UUID, required: bool = True
+) -> list[Requirement]:
     """Load a project's requirements with defects eagerly loaded.
 
-    Raises 404 if the project doesn't exist or has no requirements.
+    Raises 404 if the project doesn't exist, or if required=True and has no requirements.
     """
     project = await session.get(Project, project_id)
     if project is None:
@@ -545,7 +654,7 @@ async def _load_requirements(session: AsyncSession, project_id: uuid.UUID) -> li
             .order_by(Requirement.ref)
         )
     ).scalars().all()
-    if not rows:
+    if not rows and required:
         raise HTTPException(404, "no requirements found for this project — run extraction first")
     return list(rows)
 
@@ -624,7 +733,7 @@ async def generate_project_sdlc(
     project = await session.get(Project, project_id)
     if project is None:
         raise HTTPException(404, "project not found")
-    rows = await _load_requirements(session, project_id)
+    rows = await _load_requirements(session, project_id, required=False)
     items = _db_to_analysed(rows)
 
     # Derive SDLC factors from persisted requirements + brief text

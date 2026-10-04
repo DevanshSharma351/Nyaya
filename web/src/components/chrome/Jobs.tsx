@@ -84,10 +84,12 @@ export function useJobs(): Store {
  * `run` is intentionally not memoised on the caller's behalf: the work closure
  * captures the current input, and memoising it would run yesterday's text.
  */
+const IDLE_JOB: Job<unknown> = Object.freeze({ state: "idle" });
+
 export function useJob<T>(key: string) {
   const store = useJobs();
   const { jobs, start, clear } = store;
-  const job = (jobs[key] ?? { state: "idle" }) as Job<T>;
+  const job = (jobs[key] ?? IDLE_JOB) as Job<T>;
 
   const run = useCallback(
     (
