@@ -900,7 +900,7 @@ async def start_project_workflow(
     payload: WorkflowStartIn | None = None,
     session: AsyncSession = Depends(db_session),
 ):
-    """Start or re-run the full LangGraph 8-layer workflow for a project.
+    """Start or re-run the full LangGraph 5-stage verification workflow for a project.
 
     Reuses existing persisted requirements if already extracted, running the
     multi-agent workflow through human approval gates durably.

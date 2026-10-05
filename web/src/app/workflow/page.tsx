@@ -3,8 +3,8 @@
 /**
  * Workflow & Governance — Human-in-the-Loop Gate Orchestration.
  *
- * Implements Layer 7 (Orchestration) and Layer 8 (Governance & Safety).
- * Shows the durable LangGraph state machine execution, active human approval
+ * StateGraph execution pipeline (5 execution stages, 4 human approval gates).
+ * Shows durable LangGraph state machine execution, active human approval
  * gates with role-based competence enforcement, and tamper-evident audit trail.
  */
 
@@ -30,15 +30,69 @@ import {
 } from "@/lib/api";
 
 const PIPELINE_NODES = [
-  { id: "extract", label: "Extraction Agent", layer: "Layer 5", type: "agent" },
-  { id: "baseline_gate", label: "Requirement Baseline", layer: "Human Gate 1", type: "gate" },
-  { id: "map_compliance", label: "Compliance Agent", layer: "Layer 5", type: "agent" },
-  { id: "interpretation_gate", label: "Regulatory Interpretation", layer: "Human Gate 2", type: "gate" },
-  { id: "assess_coverage", label: "Coverage Engine", layer: "Layer 4", type: "rule" },
-  { id: "gap_gate", label: "Compliance Gap", layer: "Human Gate 3", type: "gate" },
-  { id: "recommend_sdlc", label: "SDLC AHP/TOPSIS", layer: "Layer 4", type: "mcda" },
-  { id: "sdlc_gate", label: "SDLC Selection", layer: "Human Gate 4", type: "gate" },
-  { id: "persist", label: "Persist & Traceability", layer: "Layer 6", type: "persist" },
+  {
+    id: "extract",
+    label: "Extraction Agent",
+    stage: "Stage 1",
+    type: "Agent • EARS Linters",
+    summary: "Parses brief into atomic statements with EARS syntax & ISO-29148 vague word linters",
+  },
+  {
+    id: "baseline_gate",
+    label: "Requirement Baseline",
+    stage: "Gate 1",
+    type: "Human Approval",
+    summary: "Product Owner / BA reviews requirement baseline, testability, and defect counts",
+  },
+  {
+    id: "map_compliance",
+    label: "Compliance Agent",
+    stage: "Stage 2",
+    type: "Agent • Hybrid RAG",
+    summary: "Vector + BM25 clause retrieval, LLM candidate proposal, DeBERTa NLI cross-encoder",
+  },
+  {
+    id: "interpretation_gate",
+    label: "Regulatory Interpretation",
+    stage: "Gate 2",
+    type: "Human Approval",
+    summary: "Compliance / Legal officer reviews statutory citations and regulatory conflicts",
+  },
+  {
+    id: "assess_coverage",
+    label: "Coverage Engine",
+    stage: "Stage 3",
+    type: "Rule Evaluation",
+    summary: "Deterministic engine checks declarative YAML packs (eKYC-IN) for blocking gaps",
+  },
+  {
+    id: "gap_gate",
+    label: "Compliance Gap",
+    stage: "Gate 3",
+    type: "Human Approval",
+    summary: "Compliance / Risk officer resolves or waives mandatory control omissions",
+  },
+  {
+    id: "recommend_sdlc",
+    label: "SDLC Decision Engine",
+    stage: "Stage 4",
+    type: "Mathematical MCDA",
+    summary: "Derives 7 criteria, computes AHP weights (CR < 0.10) & TOPSIS closeness ranking",
+  },
+  {
+    id: "sdlc_gate",
+    label: "SDLC Selection",
+    stage: "Gate 4",
+    type: "Human Approval",
+    summary: "Engineering Architect confirms development lifecycle methodology",
+  },
+  {
+    id: "persist",
+    label: "Persist & Traceability",
+    stage: "Stage 5",
+    type: "Database Transaction",
+    summary: "Commits verified requirements, mappings, and gate audit trail to PostgreSQL",
+  },
 ];
 
 export default function WorkflowPage() {
@@ -230,7 +284,7 @@ export default function WorkflowPage() {
 
   return (
     <ModuleShell
-      eyebrow="Layer 7 & 8 · Orchestration & Governance"
+      eyebrow="Orchestration & Governance"
       title="Workflow & Human Gates"
       lede="Execution order is explicit, every transition is checkpointed, and human-approval gates are durable interrupt points that suspend execution until authorized stakeholders clear them."
       pathname="/workflow"
@@ -303,21 +357,21 @@ export default function WorkflowPage() {
           {/* Pipeline Visual Flow */}
           <Block>
             <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
-              <div className="text-sm font-medium text-[var(--text)]">8-Layer Orchestration Pipeline</div>
+              <div className="text-sm font-medium text-[var(--text)]">StateGraph Execution Pipeline (5 Stages • 4 Human Gates)</div>
               {selectedProject && (
                 <div className="caption text-[var(--text-tertiary)]">
-                  Project: {selectedProject.name} • {gates.length > 0 ? `${gates.length} Gates Registered` : "7 Gates Active"}
+                  Project: {selectedProject.name} • {gates.length > 0 ? `${gates.length} Approval Gates Configured` : "4 Human Verification Gates Active"}
                 </div>
               )}
             </div>
             <p className="caption mb-4 text-[var(--text-secondary)]">
-              Explicit StateGraph execution with durable checkpoints. Execution suspends automatically at human-approval gates until a verified stakeholder role clears it.
+              LangGraph StateGraph DAG execution with PostgreSQL checkpointing. 5 automated reasoning stages execute sequentially and suspend execution at 4 durable human verification gates until authorized stakeholder roles clear them.
             </p>
 
             <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
               {PIPELINE_NODES.map((node) => {
                 const nodeState = getNodeState(node.id);
-                const isGate = node.type === "gate";
+                const isGate = node.id.includes("gate");
                 return (
                   <div
                     key={node.id}
@@ -332,8 +386,8 @@ export default function WorkflowPage() {
                     }`}
                   >
                     <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-medium uppercase tracking-wider text-[var(--text-tertiary)]">
-                        {node.layer}
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-tertiary)]">
+                        {node.stage}
                       </span>
                       {nodeState === "completed" ? (
                         <CheckCircle2 size={14} className="text-emerald-400" />
@@ -350,14 +404,17 @@ export default function WorkflowPage() {
                       <div className="text-sm font-semibold text-[var(--text)]">
                         {node.label}
                       </div>
-                      <div className="mt-0.5 text-[11px] capitalize text-[var(--text-secondary)]">
+                      <div className="mt-0.5 text-[11px] font-medium text-[var(--text-secondary)]">
                         {node.type}
                       </div>
+                      <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--text-tertiary)] line-clamp-2">
+                        {node.summary}
+                      </p>
                     </div>
 
                     <div className="text-[10px] font-medium">
                       {nodeState === "active" ? (
-                        <span className="text-amber-400">Suspended / Awaiting Decision</span>
+                        <span className="text-amber-400 font-semibold">Suspended / Awaiting Gate Decision</span>
                       ) : nodeState === "completed" ? (
                         <span className="text-emerald-400">Passed</span>
                       ) : nodeState === "halted" ? (
