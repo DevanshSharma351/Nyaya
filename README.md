@@ -19,12 +19,12 @@
 ---
 
 <p align="center">
-  <img src="landing.png" alt="Nyaya Dashboard Overview" width="100%" />
+  <img src="landing2.png" alt="Nyaya Dashboard Overview" width="100%" />
 </p>
 
 ---
 
-## 🏛️ Philosophy & Core Premise
+## Philosophy & Core Premise
 
 In Sanskrit epistemology, **Nyaya (न्याय)** is the school of logic concerned with *pramāṇa* — the valid means of acquiring knowledge, and what counts as admissible evidence for a claim.
 
@@ -38,7 +38,7 @@ In regulated banking software (e.g., eKYC customer onboarding, RBI Master Direct
 
 ---
 
-## 📐 The 8-Layer Architecture of Agentic AI
+## The 8-Layer Architecture of Agentic AI
 
 Nyaya is architected in direct alignment with the industry-standard **8-Layer Architecture of Agentic AI**:
 
@@ -61,7 +61,7 @@ Nyaya is architected in direct alignment with the industry-standard **8-Layer Ar
 
 ---
 
-## 🏗️ End-to-End System Architecture
+## End-to-End System Architecture
 
 <p align="center">
   <img src="fullarch.png" alt="Nyaya End-to-End System Architecture" width="100%" />
@@ -69,7 +69,7 @@ Nyaya is architected in direct alignment with the industry-standard **8-Layer Ar
 
 ---
 
-## ⚡ Stack
+## Stack
 
 Here is how each piece of the stack earns its place:
 
@@ -116,7 +116,7 @@ Minimal client state, real-time glassmorphic dashboard, and containerized deploy
 
 ---
 
-## 🔄 The 5-Stage Verification Workflow
+## The 5-Stage Verification Workflow
 
 In [`nyaya/graph/workflow.py`](nyaya/graph/workflow.py), the execution pipeline runs 5 computational stages separated by 4 durable human verification gates:
 
@@ -170,7 +170,7 @@ In [`nyaya/graph/workflow.py`](nyaya/graph/workflow.py), the execution pipeline 
 
 ---
 
-## 🤖 Specialized Agents & Engines
+## Specialized Agents & Engines
 
 ### 1. Extraction Agent (`nyaya/agents/extraction.py`)
 - **Input**: Unstructured stakeholder prose, RFP excerpts, regulatory briefs.
@@ -206,7 +206,7 @@ In [`nyaya/graph/workflow.py`](nyaya/graph/workflow.py), the execution pipeline 
 
 ---
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
 - **Docker & Docker Compose** (for PostgreSQL 16 + pgvector and MinIO)
@@ -253,12 +253,12 @@ make web
 
 ---
 
-## 📂 Repository Structure
+## Repository Structure
 
 ```
 .
 ├── fullarch.png                                  # Full system architecture diagram
-├── landing.png                                   # Platform dashboard overview
+├── landing2.png                                  # Platform dashboard overview
 ├── docker-compose.yml                            # PostgreSQL 16 (pgvector) + MinIO S3
 ├── Makefile                                      # Service automation (up, down, api, web)
 ├── pyproject.toml                                # Python project dependencies (uv)
@@ -304,6 +304,6 @@ make web
 
 ---
 
-## 📜 License
+## License
 
 Distributed under the MIT License. See `LICENSE` for details.
