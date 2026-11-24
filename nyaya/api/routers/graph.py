@@ -11,12 +11,13 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nyaya.api.deps import db_session
 from nyaya.api.schemas import GraphEdge, GraphNode, GraphOut
+from nyaya.core.enums import ApprovalStatus
 from nyaya.db.models import Clause, ControlMapping, Evidence, Requirement, SourceDocument
 
 router = APIRouter(prefix="/graph", tags=["graph"])
@@ -32,7 +33,10 @@ async def project_graph(
 
     requirements = (
         await session.execute(
-            select(Requirement).where(Requirement.project_id == project_id)
+            select(Requirement).where(
+                Requirement.project_id == project_id,
+                Requirement.approval_status != ApprovalStatus.SUPERSEDED,
+            )
         )
     ).scalars().all()
 
@@ -131,7 +135,7 @@ async def project_graph(
 
 @router.get("/demo/knowledge", response_model=GraphOut)
 async def knowledge_graph(
-    limit: int = 120, session: AsyncSession = Depends(db_session)
+    limit: int = Query(default=120, ge=1, le=500), session: AsyncSession = Depends(db_session)
 ):
     """The clause hierarchy itself, for the landing visualisation.
 
@@ -142,7 +146,7 @@ async def knowledge_graph(
         await session.execute(
             select(Clause, SourceDocument)
             .join(SourceDocument, SourceDocument.id == Clause.document_id)
-            .where(SourceDocument.effective_to.is_(None))
+            .where(SourceDocument.effective_on(), SourceDocument.is_authoritative.is_(True))
             .order_by(Clause.depth, Clause.citation_key)
             .limit(limit)
         )

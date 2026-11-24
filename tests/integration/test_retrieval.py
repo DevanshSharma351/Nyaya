@@ -8,10 +8,14 @@ committed by other fixtures and then failed on the assertions.
 
 from __future__ import annotations
 
+import uuid
+from datetime import date, timedelta
+
 import pytest
 from sqlalchemy import select
 
 from nyaya.db.models import Clause, SourceDocument
+from nyaya.ingestion import ingest_document
 from nyaya.retrieval.embedder import embed_query
 from nyaya.retrieval.hybrid import (
     dense_search,
@@ -61,6 +65,27 @@ async def test_citation_resolution_is_exact(session, corpus):
     assert await resolve_citation(session, "RBI-MD-KYC:99(z)") is None
 
 
+async def test_repeated_and_future_versions_preserve_the_active_citation(session, tmp_path):
+    source = tmp_path / "direction.txt"
+    source.write_text("1. Identity\nCheck identity before opening an account.\n")
+    code = f"VERSION-TEST-{uuid.uuid4().hex}"
+    options = dict(short_code=code, title="Direction", issuer="Test", jurisdiction="IN", embed=False)
+    first = await ingest_document(session, source, **options, version="1", effective_from=date(2023, 1, 1))
+    future = tmp_path / "future.txt"
+    future.write_text("1. Identity\nCheck identity and proof of address.\n")
+    second = await ingest_document(
+        session, future, **options, version="2", effective_from=date.today() + timedelta(days=1),
+    )
+    repeated = await ingest_document(session, source, **options, version="1", effective_from=date(2023, 1, 1))
+    assert repeated.skipped and repeated.document_id == first.document_id
+    assert second.superseded_id == first.document_id
+    assert "before opening" in (await resolve_citation(session, f"{code}:1")).text
+    assert "proof of address" in (await resolve_citation(session, f"{code}:1", version="2")).text
+    assert await resolve_citation(session, f"{code}:1", jurisdictions=["EU"]) is None
+    with pytest.raises(ValueError, match="different content"):
+        await ingest_document(session, future, **options, version="1")
+
+
 async def test_jurisdiction_scope_is_enforced(session, corpus):
     """Retrieval must not return a clause from an inapplicable jurisdiction."""
     vector = await embed_query("security of processing personal data")
@@ -78,8 +103,6 @@ async def test_superseded_documents_are_excluded(session, corpus):
     doc = (await session.execute(select(SourceDocument).limit(1))).scalars().one()
     original_end = doc.effective_to
     try:
-        from datetime import date
-
         doc.effective_to = date(2020, 1, 1)
         await session.flush()
 

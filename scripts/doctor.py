@@ -67,7 +67,7 @@ async def check_corpus() -> Check:
                 select(func.count(Clause.id))
                 .select_from(Clause)
                 .join(SourceDocument, SourceDocument.id == Clause.document_id)
-                .where(SourceDocument.effective_to.is_(None))
+                .where(SourceDocument.effective_on(), SourceDocument.is_authoritative.is_(True))
             )
             versioned = await conn.scalar(
                 select(func.count())

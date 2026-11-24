@@ -134,6 +134,8 @@ async def test_requirement_patch_and_delta_invalidation(session):
         sdlc_resp = await client.post(f"/api/projects/{project.id}/sdlc/generate")
         assert sdlc_resp.status_code == 200
         assert sdlc_resp.json()["is_stale"] is False
+        saved_sdlc = await client.get(f"/api/projects/{project.id}/sdlc")
+        assert saved_sdlc.json() == sdlc_resp.json()
 
         # Wait a small slice so updated_at is strictly greater than assessment.created_at
         await asyncio.sleep(0.05)

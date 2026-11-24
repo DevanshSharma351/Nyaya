@@ -142,6 +142,7 @@ class Settings(BaseSettings):
     # --- retrieval ---
     retrieval_top_k: int = Field(default=40, alias="NYAYA_RETRIEVAL_TOP_K")
     rerank_top_n: int = Field(default=8, alias="NYAYA_RERANK_TOP_N")
+    rerank_timeout_seconds: float = Field(default=12.0, gt=0, alias="NYAYA_RERANK_TIMEOUT_SECONDS")
     reranker_model: str = Field(default="BAAI/bge-reranker-v2-m3", alias="NYAYA_RERANKER_MODEL")
     nli_model: str = Field(
         default="MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli", alias="NYAYA_NLI_MODEL"

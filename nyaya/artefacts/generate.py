@@ -258,7 +258,7 @@ def build(
     assumptions: list[str] = []
 
     for index, item in enumerate(items, start=1):
-        ref = f"FR-{index:03d}"
+        ref = getattr(item, "ref", None) or f"FR-{index:03d}"
         stories.append(_story(item, index))
         use_cases.append(_use_case(item, index))
         risks.append(_risk(item, index))
@@ -271,9 +271,9 @@ def build(
                 statement=item.requirement.statement,
                 source_quote=item.requirement.quoted_source,
                 citations=citations,
-                controls=mappings.get(ref, []),
+                controls=mappings.get(ref, getattr(item, "controls", [])),
                 verification=list(item.requirement.acceptance_criteria),
-                approval_status="draft",
+                approval_status=getattr(item, "approval_status", "draft"),
                 confidence=getattr(item, "confidence", None),
             )
         )

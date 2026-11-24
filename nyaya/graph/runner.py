@@ -3,35 +3,93 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.types import Command
+from psycopg.rows import dict_row
+from psycopg_pool import AsyncConnectionPool
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from nyaya.agents.extraction import AnalysedRequirement
+from nyaya.agents.compliance import ComplianceResult, ValidatedMapping
+from nyaya.agents.extraction import AnalysedRequirement, RequirementDefect
 from nyaya.agents.schemas import ExtractedRequirement
 
 if TYPE_CHECKING:
     from nyaya.api.schemas import (
         WorkflowStatusOut,
     )
+from nyaya.config import get_settings
 from nyaya.core import ledger
-from nyaya.core.enums import ApprovalStatus, StakeholderRole
+from nyaya.core.confidence import Confidence, ConfidenceComponents
+from nyaya.core.enums import (
+    ApprovalStatus,
+    DefectType,
+    EvidenceRelation,
+    Priority,
+    RequirementCategory,
+    RiskLevel,
+    Severity,
+    StakeholderRole,
+)
 from nyaya.db.models import Approval, Requirement
 from nyaya.graph.gates import GATES, authorise
+from nyaya.graph.persistence import project_open_questions
 from nyaya.graph.state import initial_state
-from nyaya.graph.workflow import build_graph
+from nyaya.graph.workflow import WorkflowContext, build_graph
+from nyaya.ingestion.pii import redact_intake
+from nyaya.llm import Usage
+from nyaya.mcda.ahp import AHPResult
+from nyaya.mcda.sdlc import SDLCRecommendation
+from nyaya.mcda.topsis import Ranking, TOPSISResult
+from nyaya.retrieval.hybrid import Retrieved
+from nyaya.retrieval.obligation import ObligationTier
+from nyaya.rules.dsl import Condition, Control
+from nyaya.rules.engine import ControlCoverage, CoverageReport
+
+CHECKPOINT_TYPES = (
+    AnalysedRequirement,
+    ExtractedRequirement,
+    RequirementDefect,
+    DefectType,
+    Severity,
+    Priority,
+    RequirementCategory,
+    RiskLevel,
+    ComplianceResult,
+    ValidatedMapping,
+    EvidenceRelation,
+    ObligationTier,
+    Retrieved,
+    Confidence,
+    ConfidenceComponents,
+    Usage,
+    CoverageReport,
+    ControlCoverage,
+    Control,
+    Condition,
+    SDLCRecommendation,
+    AHPResult,
+    TOPSISResult,
+    Ranking,
+)
+
+
+class WorkflowConflictError(ValueError):
+    """The request does not match the current workflow state."""
 
 
 class WorkflowRunner:
     """Singleton runner managing compiled LangGraph app and checkpointer."""
 
-    def __init__(self, checkpointer: Any | None = None) -> None:
-        self.checkpointer = checkpointer or MemorySaver()
+    def __init__(self, checkpointer: Any) -> None:
+        self.checkpointer = checkpointer
         self.app = build_graph(checkpointer=self.checkpointer)
 
     def _config(self, project_id: uuid.UUID) -> dict[str, Any]:
@@ -48,15 +106,29 @@ class WorkflowRunner:
     ) -> WorkflowStatusOut:
         """Start or re-run the workflow for a project."""
         config = self._config(project_id)
+        snapshot = await self.app.aget_state(config)
+        if snapshot.next:
+            raise WorkflowConflictError("This project already has a workflow in progress.")
 
         # Check if project has persisted requirements to reuse
         db_requirements = (
-            await session.execute(
-                select(Requirement)
-                .where(Requirement.project_id == project_id)
-                .options(selectinload(Requirement.defects))
+            (
+                await session.execute(
+                    select(Requirement)
+                    .where(
+                        Requirement.project_id == project_id,
+                        Requirement.approval_status != ApprovalStatus.SUPERSEDED,
+                    )
+                    .options(
+                        selectinload(Requirement.defects),
+                        selectinload(Requirement.source_utterance),
+                    )
+                    .order_by(Requirement.ref)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
 
         existing_reqs: list[AnalysedRequirement] = []
         if db_requirements:
@@ -71,14 +143,29 @@ class WorkflowRunner:
                             risk_level=req.risk_level,
                             acceptance_criteria=list(req.acceptance_criteria),
                             assumptions=list(req.assumptions),
-                            quoted_source="",
+                            quoted_source=req.source_utterance.masked_text or ""
+                            if req.source_utterance
+                            else "",
                         ),
-                        defects=[],
-                        ears_pattern="ubiquitous",
+                        defects=[
+                            RequirementDefect(
+                                defect_type=d.defect_type,
+                                severity=d.severity,
+                                detail=d.detail,
+                                detector=d.detector,
+                                span_start=d.span_start,
+                                span_end=d.span_end,
+                            )
+                            for d in req.defects
+                        ],
+                        persisted_id=req.id,
+                        persisted_updated_at=req.updated_at,
                     )
                 )
 
-        text = source_text or (db_requirements[0].statement if db_requirements else "")
+        text = redact_intake(
+            source_text or (db_requirements[0].statement if db_requirements else "")
+        )
         state = initial_state(
             project_id=str(project_id),
             source_text=text,
@@ -88,14 +175,13 @@ class WorkflowRunner:
         )
         if existing_reqs:
             state["requirements"] = existing_reqs
+            state["unclear"] = await project_open_questions(session, project_id)
 
         # Execute graph until interrupted or complete
-        result = await self.app.ainvoke(state, config)
+        result = await self.app.ainvoke(state, config, context=WorkflowContext(session))
         return await self._format_status(session, project_id, result)
 
-    async def get_status(
-        self, session: AsyncSession, project_id: uuid.UUID
-    ) -> WorkflowStatusOut:
+    async def get_status(self, session: AsyncSession, project_id: uuid.UUID) -> WorkflowStatusOut:
         """Query current execution state and pending interrupts."""
         config = self._config(project_id)
         snapshot = await self.app.aget_state(config)
@@ -118,26 +204,78 @@ class WorkflowRunner:
         actor: str,
         role: StakeholderRole,
         comment: str = "",
+        expected_run_id: uuid.UUID | None = None,
     ) -> WorkflowStatusOut:
         """Submit an authorized human approval or rejection to resume execution."""
         # 1. Enforce authorization
         authorise(gate_name, role)
+        config = self._config(project_id)
+        snapshot = await self.app.aget_state(config)
+        active_gates = {
+            item.value.get("gate")
+            for task in snapshot.tasks
+            for item in task.interrupts
+            if isinstance(item.value, dict)
+        }
+        if gate_name not in active_gates:
+            raise WorkflowConflictError("This gate is no longer awaiting a decision.")
+        run_id = uuid.UUID(snapshot.values["run_id"])
+        if expected_run_id is not None and run_id != expected_run_id:
+            raise WorkflowConflictError("This decision is for a previous workflow run.")
+        gate = GATES[gate_name]
+        if gate_name == "conflict_resolution" and decision == "approve" and not comment.strip():
+            raise WorkflowConflictError("Record how the stakeholder conflict was resolved.")
+        if decision == "approve":
+            expected = {
+                item.persisted_id: item.persisted_updated_at
+                for item in snapshot.values.get("requirements", [])
+                if item.persisted_id is not None
+            }
+            if expected:
+                current = dict(
+                    (
+                        await session.execute(
+                            select(Requirement.id, Requirement.updated_at).where(
+                                Requirement.project_id == project_id,
+                                Requirement.approval_status != ApprovalStatus.SUPERSEDED,
+                            )
+                        )
+                    )
+                    .tuples()
+                    .all()
+                )
+                if current != expected:
+                    raise WorkflowConflictError(
+                        "Requirements changed during review. Reject this run and start a new review."
+                    )
 
         # 2. Record approval in DB
         approval_status = (
             ApprovalStatus.APPROVED if decision == "approve" else ApprovalStatus.REJECTED
         )
-        existing = (
-            await session.execute(
-                select(Approval).where(
-                    Approval.project_id == project_id,
-                    Approval.gate == gate_name,
-                    Approval.status == ApprovalStatus.PENDING_REVIEW,
+        pending = (
+            (
+                await session.execute(
+                    select(Approval).where(
+                        Approval.project_id == project_id,
+                        Approval.subject_id == run_id,
+                        Approval.gate == gate_name,
+                        Approval.status == ApprovalStatus.PENDING_REVIEW,
+                    )
                 )
             )
-        ).scalar_one_or_none()
+            .scalars()
+            .all()
+        )
+        existing = next(
+            (a for a in pending if not gate.all_roles_required or a.required_role == role.value),
+            None,
+        )
+        if gate.all_roles_required and existing is None:
+            raise WorkflowConflictError("This role has already submitted its decision.")
 
         if existing is not None:
+            existing.required_role = role.value
             existing.status = approval_status
             existing.decided_by = actor
             existing.decided_at = datetime.now(UTC)
@@ -145,8 +283,8 @@ class WorkflowRunner:
         else:
             approval = Approval(
                 project_id=project_id,
-                subject_kind="project",
-                subject_id=project_id,
+                subject_kind="workflow_run",
+                subject_id=run_id,
                 gate=gate_name,
                 required_role=role.value,
                 status=approval_status,
@@ -165,15 +303,21 @@ class WorkflowRunner:
             actor_kind="human",
             payload={
                 "gate": gate_name,
+                "run_id": str(run_id),
                 "decision": decision,
                 "role": role.value,
                 "comment": comment,
             },
         )
         await session.flush()
+        if gate.all_roles_required:
+            remaining = [a for a in pending if a is not existing]
+            if decision == "approve" and remaining:
+                return await self._format_status(session, project_id, snapshot.values)
+            for approval in remaining:
+                approval.status = ApprovalStatus.SUPERSEDED
 
         # 4. Resume LangGraph execution
-        config = self._config(project_id)
         result = await self.app.ainvoke(
             Command(
                 resume={
@@ -183,6 +327,7 @@ class WorkflowRunner:
                 }
             ),
             config,
+            context=WorkflowContext(session),
         )
         return await self._format_status(session, project_id, result)
 
@@ -215,55 +360,61 @@ class WorkflowRunner:
         elif values_or_res.get("__interrupt__"):
             interrupt_payload = values_or_res["__interrupt__"][0].value
             current_gate = (
-                interrupt_payload.get("gate")
-                if isinstance(interrupt_payload, dict)
-                else None
+                interrupt_payload.get("gate") if isinstance(interrupt_payload, dict) else None
             )
 
         # Record pending Approval record in DB if awaiting a gate
         if current_gate is not None:
-            existing = (
-                await session.execute(
-                    select(Approval).where(
-                        Approval.project_id == project_id,
-                        Approval.gate == current_gate,
-                        Approval.status == ApprovalStatus.PENDING_REVIEW,
+            run_id = uuid.UUID(values["run_id"])
+            gate = GATES[current_gate]
+            recorded = (
+                (
+                    await session.execute(
+                        select(Approval).where(
+                            Approval.project_id == project_id,
+                            Approval.subject_id == run_id,
+                            Approval.gate == current_gate,
+                        )
                     )
                 )
-            ).scalar_one_or_none()
-            if existing is None:
-                gate_spec = GATES.get(current_gate)
-                roles = (
-                    ", ".join([r.value for r in gate_spec.required_roles])
-                    if gate_spec
-                    else "any"
-                )
+                .scalars()
+                .all()
+            )
+            if gate.all_roles_required:
+                roles = {r.value for r in gate.required_roles}
+                missing = sorted(roles - {a.required_role for a in recorded})
+                approved = {
+                    a.required_role for a in recorded if a.status == ApprovalStatus.APPROVED
+                }
+                if interrupt_payload is not None:
+                    interrupt_payload = {
+                        **interrupt_payload,
+                        "required_roles": sorted(roles - approved),
+                        "summary": {
+                            **interrupt_payload.get("summary", {}),
+                            "approved_roles": sorted(approved),
+                        },
+                    }
+            else:
+                missing = [] if recorded else ["any_eligible_role"]
+            for role_name in missing:
                 session.add(
                     Approval(
                         project_id=project_id,
-                        subject_kind="project",
-                        subject_id=project_id,
+                        subject_kind="workflow_run",
+                        subject_id=run_id,
                         gate=current_gate,
-                        required_role=roles,
+                        required_role=role_name,
                         status=ApprovalStatus.PENDING_REVIEW,
                     )
                 )
+            if missing:
                 await session.flush()
 
         halted = bool(values.get("halted", False))
         halt_reason = str(values.get("halt_reason", ""))
 
-        # Check if the final gate was approved
-        decisions_list = values.get("decisions", [])
-        sdlc_approved = any(
-            d.get("gate") == "sdlc_selection" and d.get("decision") == "approve"
-            for d in decisions_list
-        )
-
-        completed = (
-            (not bool(snapshot.next) and not bool(interrupt_payload) and not halted)
-            or (sdlc_approved and not halted)
-        )
+        completed = not snapshot.next and not interrupt_payload and not halted
 
         status_str = (
             "halted"
@@ -292,9 +443,7 @@ class WorkflowRunner:
             ranked = sdlc.ranked()
             if ranked:
                 sdlc_top = (
-                    ranked[0][0].value
-                    if hasattr(ranked[0][0], "value")
-                    else str(ranked[0][0])
+                    ranked[0][0].value if hasattr(ranked[0][0], "value") else str(ranked[0][0])
                 )
 
         coverage_list = values.get("coverage", [])
@@ -302,6 +451,7 @@ class WorkflowRunner:
 
         return WorkflowStatusOut(
             project_id=project_id,
+            run_id=values.get("run_id"),
             status=status_str,
             current_node=snapshot.next[0] if snapshot.next else None,
             current_gate=current_gate,
@@ -317,14 +467,28 @@ class WorkflowRunner:
         )
 
 
-_runner_instance: WorkflowRunner | None = None
-
-
-def get_workflow_runner() -> WorkflowRunner:
-    global _runner_instance
-    if _runner_instance is None:
-        _runner_instance = WorkflowRunner()
-    return _runner_instance
-
-
-__all__ = ["WorkflowRunner", "get_workflow_runner"]
+@asynccontextmanager
+async def postgres_workflow_runner() -> AsyncIterator[WorkflowRunner]:
+    """Open the app's durable checkpoint store for the lifetime of the API."""
+    serde = JsonPlusSerializer(allowed_msgpack_modules=CHECKPOINT_TYPES)
+    async with AsyncConnectionPool(
+        get_settings().sync_database_url,
+        min_size=1,
+        max_size=4,
+        open=False,
+        kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row},
+    ) as pool:
+        await pool.wait(timeout=10)
+        # Concurrent index creation requires autocommit. Serialize setup across
+        # workers with a session lock on the same connection as the migrations.
+        async with pool.connection() as connection:
+            await connection.execute("SET statement_timeout = '20s'")
+            try:
+                await connection.execute("SELECT pg_advisory_lock(2144752001, 0)")
+                try:
+                    await AsyncPostgresSaver(connection, serde=serde).setup()
+                finally:
+                    await connection.execute("SELECT pg_advisory_unlock(2144752001, 0)")
+            finally:
+                await connection.execute("RESET statement_timeout")
+        yield WorkflowRunner(AsyncPostgresSaver(pool, serde=serde))

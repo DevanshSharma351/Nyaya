@@ -57,7 +57,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   try {
     response = await fetch(`${BASE}${path}`, {
       ...init,
-      headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+      headers: {
+        ...(init?.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
+        ...(init?.headers ?? {}),
+      },
       cache: "no-store",
       signal: controller.signal,
     });
@@ -325,6 +328,7 @@ export type Project = {
   status: string;
   created_at: string;
   requirement_count: number;
+  open_questions: string[];
 };
 
 export type SDLC = {
@@ -380,6 +384,9 @@ export type ProjectRequirementOut = {
   approval_status: string;
   confidence: number | null;
   acceptance_criteria: string[];
+  assumptions: string[];
+  rationale: string;
+  quoted_source: string;
   defects: {
     defect_type: string;
     severity: string;
@@ -404,10 +411,15 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ query, top_k }),
     }),
-  extract: (text: string, clarifications: Clarification[] = []) =>
+  importBrief: (file: File) => {
+    const body = new FormData();
+    body.append("upload", file);
+    return request<{ text: string }>("/analysis/brief/text", { method: "POST", body });
+  },
+  extract: (text: string, clarifications: Clarification[] = [], projectId?: string, stakeholderRole?: string) =>
     request<ExtractResult>("/analysis/extract", {
       method: "POST",
-      body: JSON.stringify({ text, clarifications }),
+      body: JSON.stringify({ text, clarifications, project_id: projectId, stakeholder_role: stakeholderRole }),
     }),
   coverage: (text: string) =>
     request<Coverage[]>("/analysis/coverage", {
@@ -512,6 +524,7 @@ export type GateSpec = {
 
 export type GateDecision = {
   gate: string;
+  run_id?: string;
   decision: "approve" | "reject";
   actor: string;
   role: string;
@@ -540,6 +553,7 @@ export type WorkflowDecision = {
 
 export type WorkflowStatus = {
   project_id: string;
+  run_id: string | null;
   status: "idle" | "running" | "waiting_approval" | "halted" | "completed";
   current_node: string | null;
   current_gate: string | null;

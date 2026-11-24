@@ -8,7 +8,7 @@
  */
 
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { RefreshCw, ShieldCheck, Sparkles } from "lucide-react";
 import { Block, ModuleShell, Rationale } from "@/components/chrome/ModuleShell";
 import { ProjectSelector } from "@/components/chrome/ProjectSelector";
@@ -31,24 +31,30 @@ export default function CoveragePage() {
   const [projectLoading, setProjectLoading] = useState(false);
   const [projectError, setProjectError] = useState<string | null>(null);
   const [showCustomPrompt, setShowCustomPrompt] = useState(false);
+  const [customMode, setCustomMode] = useState(false);
+  const projectRequest = useRef(0);
 
   // Ad-hoc job runner
   const { job, run: runJob } = useJob<Coverage | null>("coverage");
   const [customText, setCustomText] = useState(job.input ?? "");
 
   const loadCoverageForProject = useCallback(async (id: string) => {
+    const request = ++projectRequest.current;
+    setCustomMode(false);
+    setSelectedProjectId(id);
+    setProjectReport(null);
     setProjectLoading(true);
     setProjectError(null);
     try {
       const reports = await api.generateCoverage(id);
+      if (request !== projectRequest.current) return;
       const first = reports[0] ?? null;
       setProjectReport(first);
       sessionStorage.setItem("nyaya_project_id", id);
-      setSelectedProjectId(id);
     } catch (err: unknown) {
-      setProjectError((err as Error).message || "Failed to generate coverage for project");
+      if (request === projectRequest.current) setProjectError((err as Error).message || "Failed to generate coverage for project");
     } finally {
-      setProjectLoading(false);
+      if (request === projectRequest.current) setProjectLoading(false);
     }
   }, []);
 
@@ -86,6 +92,9 @@ export default function CoveragePage() {
 
   async function runCustom() {
     if (!customText.trim()) return;
+    projectRequest.current += 1;
+    setProjectLoading(false);
+    setCustomMode(true);
     await runJob(
       customText,
       async () => (await api.coverage(customText))[0] ?? null,
@@ -93,16 +102,16 @@ export default function CoveragePage() {
         first
           ? {
               label: `${first.blocking_gaps.length} blocking gaps`,
-              detail: `${Math.round(first.coverage_ratio * 100)}% of ${first.pack} covered`,
+              detail: `${Math.round(first.coverage_ratio * 100)}% of ${first.pack} matched`,
             }
           : { label: "No applicable pack", detail: "nothing to assess" },
       { label: "Assessing against the control pack" },
     );
   }
 
-  const report: Coverage | null = projectReport ?? job.result ?? null;
-  const busy = projectLoading || job.state === "running";
-  const error = projectError ?? job.error ?? null;
+  const report = customMode ? job.result ?? null : projectReport;
+  const busy = customMode ? job.state === "running" : projectLoading;
+  const error = customMode ? job.error ?? null : projectError;
 
   const gaps = report?.controls.filter((c) => c.is_gap) ?? [];
   const covered = report?.controls.filter((c) => !c.is_gap) ?? [];
@@ -112,7 +121,7 @@ export default function CoveragePage() {
       pathname="/coverage"
       eyebrow="Compliance Coverage"
       title="Statutory Control Pack Coverage"
-      lede="Every control in the pack cites the statutory clause that establishes it. Gaps represent mandatory regulatory obligations that lack adequate requirement coverage."
+      lede="See which controls match the project’s requirements and which need attention. Citation verification happens in Workflow."
       scene={<CoverageLayer controls={report?.controls ?? null} />}
       sceneCaption="Your requirements are the column on the left; the control pack is the grid on the right. Red nodes represent blocking gaps; amber represents major gaps; green indicates satisfied controls."
     >
@@ -148,16 +157,17 @@ export default function CoveragePage() {
                   <Badge tone="var(--clause)">v{report.pack_version}</Badge>
                 </div>
                 <div className="mt-1 flex flex-wrap items-center gap-3">
+                  {customMode && <span className="caption">Custom text assessment</span>}
                   <span className="mono font-bold" style={{ color: "var(--gap)" }}>
                     {report.blocking_gaps.length} Blocking Gaps
                   </span>
                   <span className="caption text-[var(--text-secondary)]">&bull;</span>
                   <span className="mono font-medium text-[var(--confirmed)]">
-                    {covered.length} Controls Covered
+                    {covered.length} of {report.controls.length} controls matched
                   </span>
                   <span className="caption text-[var(--text-secondary)]">&bull;</span>
                   <span className="caption text-[var(--text-secondary)]">
-                    {Math.round(report.coverage_ratio * 100)}% Overall Coverage
+                    {Math.round(report.coverage_ratio * 100)}% control pack coverage
                   </span>
                 </div>
               </div>
@@ -166,10 +176,10 @@ export default function CoveragePage() {
             <Button
               variant="quiet"
               onClick={() => selectedProjectId && loadCoverageForProject(selectedProjectId)}
-              disabled={busy}
+              disabled={busy || !selectedProjectId}
             >
               <RefreshCw size={14} className={busy ? "animate-spin" : ""} />
-              Re-assess Coverage
+              {customMode ? "Show selected project" : "Re-assess Coverage"}
             </Button>
           </div>
         </Block>
@@ -194,7 +204,7 @@ export default function CoveragePage() {
 
       {!busy && !error && !report && (
         <Block>
-          <Empty>Select a project from the selector above to assess statutory control pack coverage.</Empty>
+          <Empty>{selectedProjectId || customMode ? "No control pack applies to this assessment." : "Select a project to assess control pack coverage."}</Empty>
         </Block>
       )}
 
@@ -235,7 +245,7 @@ export default function CoveragePage() {
 
       {/* Covered Controls List */}
       {covered.length > 0 && (
-        <Block title={`Satisfied Controls (${covered.length})`}>
+        <Block title={`Matched Controls (${covered.length})`}>
           <div className="grid gap-3 sm:grid-cols-2">
             {covered.map((control) => (
               <div
@@ -245,7 +255,7 @@ export default function CoveragePage() {
               >
                 <div className="flex items-center justify-between mb-1">
                   <span className="mono font-semibold text-[var(--confirmed)]">{control.control_id}</span>
-                  <Badge tone="var(--confirmed)">SATISFIED</Badge>
+                  <Badge tone="var(--confirmed)">RULE MATCH</Badge>
                 </div>
                 <div className="caption" style={{ lineHeight: 1.4 }}>
                   {control.title}
@@ -272,8 +282,7 @@ export default function CoveragePage() {
           satisfies its condition — the pack separates <span className="mono">
           applies_when</span> from <span className="mono">satisfied_when</span> so
           a control that does not apply is not counted as covered either.
-          The mapping that decides satisfaction uses strict verification rules,
-          ensuring unverified requirements are not prematurely declared compliant.
+          Each match is a preliminary rule result. Review the supporting citations in Workflow.
         </Rationale>
       </Block>
 

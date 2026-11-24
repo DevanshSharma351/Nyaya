@@ -39,7 +39,7 @@ def _load(model_name: str) -> CrossEncoder:
     from sentence_transformers import CrossEncoder
 
     # Runs on Apple Silicon's GPU where available; falls back automatically.
-    return CrossEncoder(model_name, max_length=512)
+    return CrossEncoder(model_name, max_length=512, local_files_only=True)
 
 
 def available(model_name: str | None = None) -> bool:
@@ -49,7 +49,7 @@ def available(model_name: str | None = None) -> bool:
     model must still retrieve, just less precisely.
     """
     try:
-        _load(model_name or get_settings().reranker_model)
+        exclusive(lambda: _load(model_name or get_settings().reranker_model))
     except Exception:
         return False
     return True
@@ -67,7 +67,6 @@ def rerank_sync(
         return []
 
     settings = get_settings()
-    model = _load(model_name or settings.reranker_model)
 
     # `contextual`, not `display`: a sub-clause is scored together with the
     # clauses that enclose it. Where no context has been loaded the two are
@@ -75,7 +74,9 @@ def rerank_sync(
     pairs = [(query, c.contextual) for c in candidates]
     # Serialised: the model is shared and this runs in a worker thread. See
     # nyaya/retrieval/inference.py - concurrent calls segfault on Metal.
-    scores = exclusive(lambda: model.predict(pairs, show_progress_bar=False))
+    scores = exclusive(
+        lambda: _load(model_name or settings.reranker_model).predict(pairs, show_progress_bar=False)
+    )
 
     for candidate, score in zip(candidates, scores, strict=True):
         candidate.rerank_score = float(score)

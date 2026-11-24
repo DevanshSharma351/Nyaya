@@ -24,6 +24,7 @@ how much the grounding machinery is doing.
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass, field
 
 from pydantic import BaseModel, Field
@@ -112,6 +113,7 @@ class ValidatedMapping:
     citation_key: str
     quoted_text: str
     reasoning: str
+    clause_id: uuid.UUID | None = None
 
     resolved: bool = False
     """Whether `citation_key` matched a real clause in the versioned KB."""
@@ -262,11 +264,21 @@ async def map_requirement(
         options=SearchOptions(top_k=top_k, jurisdictions=jurisdictions),
     )
 
+    supplied = {clause.citation_key: clause for clause in retrieved.results}
+    supplemental = []
+    for key in dict.fromkeys(key for control in seeded for key in control.citations):
+        if key not in supplied:
+            clause = await resolve_citation(session, key, jurisdictions=jurisdictions)
+            if clause is not None:
+                supplied[key] = clause
+                supplemental.append(clause)
+    await load_context(session, supplemental)
+
     provider = get_provider(role)
     prompt = (
         f"REQUIREMENT:\n{requirement.statement}\n\n"
         f"CANDIDATE CONTROLS:\n{_render_controls(seeded)}\n\n"
-        f"RETRIEVED CLAUSES:\n{_render_evidence(retrieved.results)}"
+        f"RETRIEVED CLAUSES:\n{_render_evidence(list(supplied.values()))}"
     )
     completion = await provider.complete_structured(
         [
@@ -276,13 +288,12 @@ async def map_requirement(
         ComplianceOutput,
     )
 
-    seeded_ids = {c.control_id for c in seeded}
-    retrieved_by_key = {r.citation_key: r for r in retrieved.results}
+    controls = {c.control_id: c for c in seeded}
 
     validated: list[ValidatedMapping] = []
     for proposal in completion.value.mappings:
         validated.append(
-            await _validate(session, requirement, proposal, seeded_ids, retrieved_by_key)
+            await _validate(requirement, proposal, controls, supplied)
         )
 
     usage = Usage(
@@ -296,18 +307,17 @@ async def map_requirement(
         requirement_statement=requirement.statement,
         mappings=validated,
         conflicts=completion.value.conflicts,
-        evidence=retrieved.results,
-        rule_seeded_controls=sorted(seeded_ids),
+        evidence=list(supplied.values()),
+        rule_seeded_controls=sorted(controls),
         model=f"{provider.name}:{provider.model}",
         usage=usage,
     )
 
 
 async def _validate(
-    session: AsyncSession,
     requirement: ExtractedRequirement,
     proposal: ProposedMapping,
-    seeded_ids: set[str],
+    controls: dict[str, Control],
     retrieved_by_key: dict[str, Retrieved],
 ) -> ValidatedMapping:
     """Run every deterministic check over one proposed mapping."""
@@ -316,26 +326,27 @@ async def _validate(
         citation_key=proposal.citation_key,
         quoted_text=proposal.quoted_text,
         reasoning=proposal.reasoning,
-        rule_seeded=proposal.control_id in seeded_ids,
+        rule_seeded=proposal.control_id in controls,
     )
 
-    # (a) Does the cited key resolve to a real clause in the versioned KB?
+    # (a) Was the clause supplied, and does it belong to this control?
     clause = retrieved_by_key.get(proposal.citation_key)
-    if clause is None:
-        clause = await resolve_citation(session, proposal.citation_key)
-        if clause is not None:
-            await load_context(session, [clause])
     mapping.resolved = clause is not None
 
     if clause is None:
         mapping.rejections.append(
-            f"citation {proposal.citation_key!r} does not resolve to any clause "
-            f"in the knowledge base"
+            f"citation {proposal.citation_key!r} was not supplied as applicable evidence"
         )
         mapping.confidence = fuse(ConfidenceComponents())
         return mapping
 
+    mapping.clause_id = clause.clause_id
     mapping.retrieval_score = clause.rerank_score or clause.fused_score or 0.0
+    control = controls.get(proposal.control_id)
+    if control is None or proposal.citation_key not in control.citations:
+        mapping.rejections.append("the citation is not an authority for the proposed control")
+        mapping.confidence = fuse(ConfidenceComponents())
+        return mapping
 
     # (b) Does the quoted text actually appear in that clause?
     quoted = " ".join(proposal.quoted_text.split()).lower()
@@ -347,6 +358,8 @@ async def _validate(
         mapping.rejections.append(
             "quoted text does not appear in the cited clause; it was composed rather than copied"
         )
+        mapping.confidence = fuse(ConfidenceComponents())
+        return mapping
 
     # (c) Does the clause oblige the requirement?
     #

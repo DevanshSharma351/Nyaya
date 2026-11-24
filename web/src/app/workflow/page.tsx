@@ -3,7 +3,7 @@
 /**
  * Workflow & Governance — Human-in-the-Loop Gate Orchestration.
  *
- * StateGraph execution pipeline (5 execution stages, 4 human approval gates).
+ * StateGraph execution pipeline and human approval gates.
  * Shows durable LangGraph state machine execution, active human approval
  * gates with role-based competence enforcement, and tamper-evident audit trail.
  */
@@ -24,7 +24,6 @@ import { Badge, Button, Empty, Failure } from "@/components/ui";
 import {
   api,
   type Approval,
-  type GateSpec,
   type Project,
   type WorkflowStatus,
 } from "@/lib/api";
@@ -43,6 +42,27 @@ const PIPELINE_NODES = [
     stage: "Gate 1",
     type: "Human Approval",
     summary: "Product Owner / BA reviews requirement baseline, testability, and defect counts",
+  },
+  {
+    id: "conflict_gate",
+    label: "Stakeholder Conflicts",
+    stage: "When flagged",
+    type: "Human Approval",
+    summary: "Product Owner or Architect records how each conflict was resolved",
+  },
+  {
+    id: "security_gate",
+    label: "Security Requirements",
+    stage: "When flagged",
+    type: "Human Approval",
+    summary: "Security or Architecture reviews high-risk security and privacy requirements",
+  },
+  {
+    id: "architecture_gate",
+    label: "Architecture Requirements",
+    stage: "When flagged",
+    type: "Human Approval",
+    summary: "Architect reviews critical integration and availability requirements",
   },
   {
     id: "map_compliance",
@@ -77,14 +97,14 @@ const PIPELINE_NODES = [
     label: "SDLC Decision Engine",
     stage: "Stage 4",
     type: "Mathematical MCDA",
-    summary: "Derives 7 criteria, computes AHP weights (CR < 0.10) & TOPSIS closeness ranking",
+    summary: "Derives project factors and ranks lifecycle models with AHP and TOPSIS",
   },
   {
     id: "sdlc_gate",
     label: "SDLC Selection",
     stage: "Gate 4",
     type: "Human Approval",
-    summary: "Engineering Architect confirms development lifecycle methodology",
+    summary: "Project Manager, Architect, Security, and Compliance each sign off",
   },
   {
     id: "persist",
@@ -98,7 +118,6 @@ const PIPELINE_NODES = [
 export default function WorkflowPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectId, setProjectId] = useState<string | null>(null);
-  const [gates, setGates] = useState<GateSpec[]>([]);
   const [status, setStatus] = useState<WorkflowStatus | null>(null);
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [loading, setLoading] = useState(false);
@@ -115,13 +134,9 @@ export default function WorkflowPage() {
     [projects, projectId]
   );
 
-  // Load gate specifications and projects once on mount
+  // Load projects once on mount.
   useEffect(() => {
     let cancelled = false;
-    api.workflowGates().then((g) => {
-      if (!cancelled) setGates(g);
-    }).catch(() => {});
-
     api.projects().then((list) => {
       if (cancelled) return;
       setProjects(list);
@@ -208,8 +223,8 @@ export default function WorkflowPage() {
   // Submit gate approval / rejection
   const handleGateDecision = async (decision: "approve" | "reject") => {
     if (!projectId || !status?.current_gate) return;
-    if (!selectedRole) {
-      setError("Please select a stakeholder role with authority for this gate.");
+    if (!status.gate_payload?.required_roles.includes(selectedRole)) {
+      setError("Select a reviewer role that is awaiting a decision.");
       return;
     }
     setActionLoading(true);
@@ -217,6 +232,7 @@ export default function WorkflowPage() {
     try {
       const res = await api.decideWorkflowGate(projectId, {
         gate: status.current_gate,
+        run_id: status.run_id ?? undefined,
         decision,
         actor: actor.trim() || "anonymous@bank.example",
         role: selectedRole,
@@ -224,6 +240,7 @@ export default function WorkflowPage() {
       });
       setStatus(res);
       setComment("");
+      setSelectedRole("");
       await refreshStatus(projectId);
     } catch (err: unknown) {
       setError((err as Error)?.message || "Decision rejected by gate authorization");
@@ -240,7 +257,7 @@ export default function WorkflowPage() {
       return "pending";
     }
     if (status.completed) return "completed";
-    if (status.current_gate === nodeId) return "active";
+    if (status.current_node === nodeId) return "active";
 
     // Mark previous nodes as completed based on decisions history
     const decidedGates = status.decisions.map((d) => d.gate);
@@ -250,6 +267,9 @@ export default function WorkflowPage() {
     if (nodeId === "baseline_gate" && decidedGates.includes("requirement_baseline")) {
       return "completed";
     }
+    if (nodeId === "conflict_gate" && decidedGates.includes("conflict_resolution")) return "completed";
+    if (nodeId === "security_gate" && decidedGates.includes("security_requirements")) return "completed";
+    if (nodeId === "architecture_gate" && decidedGates.includes("architecture_requirements")) return "completed";
     if (nodeId === "map_compliance" && (decidedGates.includes("regulatory_interpretation") || status.compliance_count > 0)) {
       return "completed";
     }
@@ -268,10 +288,6 @@ export default function WorkflowPage() {
     if (nodeId === "sdlc_gate" && decidedGates.includes("sdlc_selection")) {
       return "completed";
     }
-    if (nodeId === "persist" && (status.completed || decidedGates.includes("sdlc_selection"))) {
-      return "completed";
-    }
-
     return "pending";
   };
 
@@ -286,7 +302,7 @@ export default function WorkflowPage() {
     <ModuleShell
       eyebrow="Orchestration & Governance"
       title="Workflow & Human Gates"
-      lede="Execution order is explicit, every transition is checkpointed, and human-approval gates are durable interrupt points that suspend execution until authorized stakeholders clear them."
+      lede="Review requirement baselines, evidence, and lifecycle recommendations. Pending reviews are saved in PostgreSQL."
       pathname="/workflow"
     >
       {/* Unified Project Selector Bar */}
@@ -357,16 +373,13 @@ export default function WorkflowPage() {
           {/* Pipeline Visual Flow */}
           <Block>
             <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
-              <div className="text-sm font-medium text-[var(--text)]">StateGraph Execution Pipeline (5 Stages • 4 Human Gates)</div>
+              <div className="text-sm font-medium text-[var(--text)]">Workflow Status</div>
               {selectedProject && (
                 <div className="caption text-[var(--text-tertiary)]">
-                  Project: {selectedProject.name} • {gates.length > 0 ? `${gates.length} Approval Gates Configured` : "4 Human Verification Gates Active"}
+                  Project: {selectedProject.name}
                 </div>
               )}
             </div>
-            <p className="caption mb-4 text-[var(--text-secondary)]">
-              LangGraph StateGraph DAG execution with PostgreSQL checkpointing. 5 automated reasoning stages execute sequentially and suspend execution at 4 durable human verification gates until authorized stakeholder roles clear them.
-            </p>
 
             <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
               {PIPELINE_NODES.map((node) => {
@@ -484,11 +497,9 @@ export default function WorkflowPage() {
                         <option value="">Select Competent Role...</option>
                         {status.gate_payload.required_roles.map((r) => (
                           <option key={r} value={r}>
-                            {r} (Authorized)
+                            {r}
                           </option>
                         ))}
-                        <option value="developer">developer (Unauthorized)</option>
-                        <option value="customer">customer (Unauthorized)</option>
                       </select>
                     </div>
 
@@ -569,7 +580,7 @@ export default function WorkflowPage() {
                 <div>
                   <h4 className="font-semibold text-emerald-200">Workflow Fully Completed & Approved</h4>
                   <p className="mt-1 text-sm">
-                    All mandatory human gates were satisfied. Requirements have been elevated to APPROVED status, control mappings verified, and traceability links recorded into the immutable ledger.
+                    The review is complete. The approved baseline and its traceability records are saved.
                   </p>
                   {status.sdlc_recommended && (
                     <p className="mt-2 text-xs text-emerald-400">

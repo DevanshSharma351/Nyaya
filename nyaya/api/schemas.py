@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from nyaya.core.enums import Priority, RequirementCategory, RiskLevel
+from nyaya.core.enums import Priority, RequirementCategory, RiskLevel, StakeholderRole
 
 
 class ProjectIn(BaseModel):
@@ -31,6 +32,7 @@ class ProjectOut(BaseModel):
     status: str
     created_at: datetime
     requirement_count: int = 0
+    open_questions: list[str] = Field(default_factory=list)
 
 
 class DefectOut(BaseModel):
@@ -59,6 +61,9 @@ class RequirementOut(BaseModel):
     approval_status: str
     confidence: float | None
     acceptance_criteria: list[str]
+    assumptions: list[str] = Field(default_factory=list)
+    rationale: str = ""
+    quoted_source: str = ""
     defects: list[DefectOut] = Field(default_factory=list)
     evidence: list[EvidenceOut] = Field(default_factory=list)
 
@@ -82,6 +87,8 @@ class Clarification(BaseModel):
 class ExtractIn(BaseModel):
     text: str = Field(min_length=1)
     title: str | None = None
+    project_id: uuid.UUID | None = None
+    stakeholder_role: StakeholderRole | None = None
     domain: str = "ekyc_onboarding"
     jurisdictions: list[str] = Field(default_factory=lambda: ["IN"])
 
@@ -391,7 +398,8 @@ class ProjectUsageOut(BaseModel):
 
 class GateDecisionIn(BaseModel):
     gate: str
-    decision: str = "approve"  # "approve" | "reject"
+    run_id: uuid.UUID | None = None
+    decision: Literal["approve", "reject"] = "approve"
     actor: str = Field(min_length=1)
     role: str = Field(description="StakeholderRole value, e.g. business_analyst, compliance, etc.")
     comment: str = ""
@@ -418,8 +426,8 @@ class GateSpecOut(BaseModel):
 
 class WorkflowStartIn(BaseModel):
     source_text: str | None = None
-    domain: str = "ekyc_onboarding"
-    jurisdictions: list[str] = Field(default_factory=lambda: ["IN"])
+    domain: str | None = None
+    jurisdictions: list[str] | None = None
     stakeholder_role: str | None = None
 
 
@@ -433,6 +441,7 @@ class WorkflowDecisionOut(BaseModel):
 
 class WorkflowStatusOut(BaseModel):
     project_id: uuid.UUID
+    run_id: uuid.UUID | None = None
     status: str  # "idle" | "running" | "waiting_approval" | "halted" | "completed"
     current_node: str | None = None
     current_gate: str | None = None

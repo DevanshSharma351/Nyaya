@@ -11,7 +11,10 @@ change scattered across every agent that needs evidence.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import asyncio
+import logging
+from dataclasses import dataclass, replace
+from datetime import date
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,8 +29,9 @@ from nyaya.retrieval.hybrid import (
     load_context,
     reciprocal_rank_fusion,
 )
-from nyaya.retrieval.rerank import available as reranker_available
 from nyaya.retrieval.rerank import rerank
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -51,7 +55,7 @@ class SearchOptions:
     use_reranker: bool = True
     lexical_weight: float = DEFAULT_FUSION_WEIGHTS[1]
     jurisdictions: list[str] | None = None
-    as_of: object | None = None
+    as_of: date | None = None
 
 
 async def search(
@@ -105,10 +109,17 @@ async def search(
     # were of exactly that shape.
     await load_context(session, shortlist)
 
-    if opts.use_reranker and shortlist and reranker_available():
-        results = await rerank(query, list(shortlist), top_n=opts.top_k)
-    else:
-        results = shortlist[: opts.top_k]
+    results = shortlist[: opts.top_k]
+    if opts.use_reranker and shortlist:
+        try:
+            # Inference runs in a worker and can finish after a request timeout.
+            # Give it separate objects so it cannot update the fallback results.
+            results = await asyncio.wait_for(
+                rerank(query, [replace(candidate) for candidate in shortlist], top_n=opts.top_k),
+                timeout=settings.rerank_timeout_seconds,
+            )
+        except Exception as exc:
+            logger.warning("Reranking unavailable (%s); returning retrieval order", type(exc).__name__)
 
     return RetrievalResult(results=results, dense_count=len(dense), lexical_count=len(lexical))
 

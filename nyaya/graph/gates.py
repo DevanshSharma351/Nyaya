@@ -37,6 +37,7 @@ class Gate:
     blocking: bool = True
     """False for gates that record a decision but need not halt the run - used
     where a project has explicitly delegated the judgement in advance."""
+    all_roles_required: bool = False
 
 
 GATES: dict[str, Gate] = {
@@ -83,6 +84,11 @@ GATES: dict[str, Gate] = {
         ),
         required_roles=(StakeholderRole.PRODUCT_OWNER, StakeholderRole.ARCHITECT),
     ),
+    "architecture_requirements": Gate(
+        name="architecture_requirements",
+        description="Approve critical integration and availability requirements before design.",
+        required_roles=(StakeholderRole.ARCHITECT,),
+    ),
     "production_readiness": Gate(
         name="production_readiness",
         description=(
@@ -106,10 +112,12 @@ GATES: dict[str, Gate] = {
             "way of working that the factor vector does not fully capture."
         ),
         required_roles=(
+            StakeholderRole.PROJECT_MANAGER,
             StakeholderRole.ARCHITECT,
-            StakeholderRole.PRODUCT_OWNER,
+            StakeholderRole.SECURITY,
             StakeholderRole.COMPLIANCE,
         ),
+        all_roles_required=True,
     ),
 }
 

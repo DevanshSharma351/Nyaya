@@ -20,7 +20,9 @@ from __future__ import annotations
 
 import logging
 import re
+import uuid
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from nyaya.agents.prompts import build_extraction_messages, build_repair_messages
 from nyaya.agents.quality import consistency, ears, lexicon
@@ -33,6 +35,7 @@ from nyaya.agents.schemas import (
 )
 from nyaya.config import ModelRole
 from nyaya.core.enums import DefectType, Severity
+from nyaya.ingestion.pii import redact_intake
 from nyaya.llm import Message, Usage, get_provider
 
 logger = logging.getLogger(__name__)
@@ -60,6 +63,8 @@ class AnalysedRequirement:
     defects: list[RequirementDefect] = field(default_factory=list)
     ears_pattern: str = "none"
     repair_attempts: int = 0
+    persisted_id: uuid.UUID | None = None
+    persisted_updated_at: datetime | None = None
 
     @property
     def is_testable(self) -> bool:
@@ -81,6 +86,8 @@ class ExtractionResult:
     repair pass was skipped, the requirements below still carry defects nobody
     tried to fix, and a reviewer needs to know that before reading them.
     """
+
+    source_text: str | None = None
 
     @property
     def testable_fraction(self) -> float:
@@ -209,6 +216,7 @@ async def extract(
     """Extract testable requirements from `text`."""
     context = context or ExtractionContext()
     provider = get_provider(role)
+    text = redact_intake(text)
 
     turns = build_extraction_messages(text, context)
     messages = [Message(role=r, content=c) for r, c in turns]
@@ -324,6 +332,7 @@ async def extract(
         repair_rounds=rounds,
         usage=usage,
         notes=notes,
+        source_text=text,
     )
 
 

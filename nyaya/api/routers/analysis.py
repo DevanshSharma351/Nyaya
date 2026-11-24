@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from pathlib import Path
+from tempfile import NamedTemporaryFile
+from zipfile import ZipFile
+
+from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.concurrency import run_in_threadpool
 
 from nyaya.agents.extraction import extract
 from nyaya.agents.schemas import ExtractionContext
@@ -32,9 +38,12 @@ from nyaya.api.schemas import (
 )
 from nyaya.artefacts import build as build_artefacts
 from nyaya.core import ledger
-from nyaya.core.enums import RiskLevel, SDLCModel
+from nyaya.core.enums import ApprovalStatus, RiskLevel, SDLCModel
 from nyaya.db.models import Project, Requirement, SDLCAssessment, SDLCWorkflow
 from nyaya.graph.impact import analyse_change
+from nyaya.graph.persistence import save_extraction
+from nyaya.ingestion.parsers import parse
+from nyaya.ingestion.pii import redact_intake
 from nyaya.mcda.derive import derive
 from nyaya.mcda.sdlc import default_factors, recommend
 from nyaya.mcda.workflow import Workflow
@@ -42,6 +51,41 @@ from nyaya.mcda.workflow import generate as generate_workflow
 from nyaya.rules.engine import evaluate, requirement_facts
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
+
+
+def _read_brief(data: bytes, suffix: str) -> str:
+    with NamedTemporaryFile(suffix=suffix) as source:
+        source.write(data)
+        source.flush()
+        if suffix == ".docx":
+            with ZipFile(source.name) as archive:
+                if sum(item.file_size for item in archive.infolist()) > 24 * 1024 * 1024:
+                    raise ValueError("Word document exceeds the decompressed size limit")
+        return parse(source.name).strip()
+
+
+@router.post("/brief/text")
+async def import_brief(upload: UploadFile) -> dict[str, str]:
+    """Extract a redacted, editable brief from a stakeholder document."""
+    suffix = Path(upload.filename or "").suffix.lower()
+    size_limit = 5 * 1024 * 1024
+    try:
+        if suffix not in {".pdf", ".docx", ".txt", ".md"}:
+            raise HTTPException(415, "Choose a PDF, Word, text, or Markdown file.")
+        data = await upload.read(size_limit + 1)
+    finally:
+        await upload.close()
+    if len(data) > size_limit:
+        raise HTTPException(413, "The file exceeds the 5 MB upload limit.")
+    try:
+        text = await run_in_threadpool(_read_brief, data, suffix)
+    except Exception as exc:
+        raise HTTPException(422, "Could not read this document as text.") from exc
+    if not text:
+        raise HTTPException(422, "No selectable text was found in this document.")
+    if len(text) > 50_000:
+        raise HTTPException(413, "Import a section with at most 50,000 characters.")
+    return {"text": redact_intake(text)}
 
 
 def _with_clarifications(payload: ExtractIn | BriefIn) -> str:
@@ -73,11 +117,31 @@ async def extract_requirements(
     downstream modules (SDLC, Artefacts, Coverage) can operate on the
     project_id without re-running the LLM.
     """
+    project = None
+    previous = []
+    if payload.project_id:
+        project = await session.get(Project, payload.project_id, with_for_update=True)
+        if project is None:
+            raise HTTPException(404, "project not found")
+        if not payload.clarifications:
+            raise HTTPException(422, "Provide clarification answers to update this brief.")
+        previous = list((await session.scalars(
+            select(Requirement).where(Requirement.project_id == project.id)
+        )).all())
+        if any(row.approval_status == ApprovalStatus.APPROVED for row in previous):
+            raise HTTPException(409, "Edit the approved requirements to propose a new version.")
+        payload = payload.model_copy(update={
+            "text": project.description or payload.text,
+            "domain": project.domain,
+            "jurisdictions": project.jurisdictions,
+        })
+
     try:
         result = await extract(
             _with_clarifications(payload),
             context=ExtractionContext(
-                domain=payload.domain, jurisdictions=payload.jurisdictions
+                domain=payload.domain, jurisdictions=payload.jurisdictions,
+                stakeholder_role=payload.stakeholder_role,
             ),
         )
     except Exception as e:
@@ -86,32 +150,21 @@ async def extract_requirements(
         raise
 
     # Persist project + requirements so downstream endpoints can reuse them
-    title = (payload.title or payload.text.split("\n")[0][:100]).strip()
+    source_text = result.source_text or redact_intake(_with_clarifications(payload))
+    title = (redact_intake(payload.title) if payload.title else source_text.split("\n")[0][:100]).strip()
     if len(title) < 5:
         title = "Requirement Analysis"
 
-    project = Project(
-        name=title,
-        domain=payload.domain,
-        description=payload.text,
-        jurisdictions=payload.jurisdictions,
-    )
-    session.add(project)
+    if project is None:
+        project = Project(name=title, domain=payload.domain, jurisdictions=payload.jurisdictions)
+        session.add(project)
+    project.description = source_text
     await session.flush()
 
-    for idx, item in enumerate(result.requirements):
-        req = Requirement(
-            project_id=project.id,
-            ref=f"REQ-{idx+1:03d}",
-            statement=item.requirement.statement,
-            categories=[c.value for c in item.requirement.categories],
-            priority=item.requirement.priority,
-            risk_level=item.requirement.risk_level,
-            business_justification=item.requirement.rationale,
-            acceptance_criteria=item.requirement.acceptance_criteria,
-            assumptions=item.requirement.assumptions,
-        )
-        session.add(req)
+    save_extraction(
+        session, project, source_text, result.requirements, result.unclear, result.model,
+        previous=previous,
+    )
 
     await session.flush()
 
@@ -262,7 +315,8 @@ async def recommend_sdlc_from_brief(
         if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e) or "rate limit" in str(e).lower():
             raise HTTPException(429, "LLM rate limit exceeded. Please wait a minute and try again.") from e
         raise
-    derivation = derive(result.requirements, result.unclear, brief=payload.text)
+    source_text = result.source_text or redact_intake(_with_clarifications(payload))
+    derivation = derive(result.requirements, result.unclear, brief=source_text)
     ranking = recommend(derivation.factors)
     critical = sum(
         1
@@ -275,32 +329,20 @@ async def recommend_sdlc_from_brief(
         open_questions=len(result.unclear),
     )
     
-    title = payload.title or payload.text.split("\n")[0][:100]
+    title = redact_intake(payload.title) if payload.title else source_text.split("\n")[0][:100]
     if len(title) < 5:
         title = "SDLC Assessment"
         
     project = Project(
         name=title,
         domain=payload.domain,
-        description=payload.text,
+        description=source_text,
         jurisdictions=payload.jurisdictions,
     )
     session.add(project)
     await session.flush()
     
-    for idx, item in enumerate(result.requirements):
-        req = Requirement(
-            project_id=project.id,
-            ref=f"REQ-{idx+1:03d}",
-            statement=item.requirement.statement,
-            categories=[c.value for c in item.requirement.categories],
-            priority=item.requirement.priority,
-            risk_level=item.requirement.risk_level,
-            business_justification=item.requirement.rationale,
-            acceptance_criteria=item.requirement.acceptance_criteria,
-            assumptions=item.requirement.assumptions,
-        )
-        session.add(req)
+    save_extraction(session, project, source_text, result.requirements, result.unclear, result.model)
         
     assessment = SDLCAssessment(
         project_id=project.id,
@@ -361,7 +403,7 @@ async def recommend_sdlc_from_brief(
         subject_id=project.id,
     )
 
-    return SDLCFromBriefOut(
+    response = SDLCFromBriefOut(
         project_id=project.id,
         recommendation=_to_sdlc_out(ranking),
         workflow=_to_workflow_out(workflow),
@@ -369,6 +411,19 @@ async def recommend_sdlc_from_brief(
         observations=derivation.observations,
         requirements_extracted=len(result.requirements),
         unclear=result.unclear,
+    )
+    await record_sdlc_snapshot(session, assessment, response)
+    return response
+
+
+async def record_sdlc_snapshot(
+    session: AsyncSession, assessment: SDLCAssessment, response: SDLCFromBriefOut,
+) -> None:
+    """Keep the presented rationale and workflow with the persisted assessment."""
+    await ledger.record(
+        session, project_id=assessment.project_id, event_type="sdlc_assessment",
+        actor="sdlc_engine", actor_kind="system", subject_kind="sdlc_assessment",
+        subject_id=assessment.id, payload=response.model_dump(mode="json"),
     )
 
 

@@ -27,7 +27,7 @@ controls:
     applies_when:
       - domain_is: [ekyc_onboarding]
     satisfied_when:
-      - text_matches: "verif|identif|authenticat"
+      - text_matches: 'verif\w*\s+(?:the\s+)?(?:customer|applicant)(?:s|\x27s)?\s+(?:identity|identification)|identif\w*\s+(?:and\s+verif\w*\s+)?(?:the\s+)?(?:customer|applicant)\b|(?:customer|applicant)(?:s|\x27s)?\s+identity.{0,25}verif'
       - category_any: [functional, regulatory, security]
 
   - id: KYC.CDD.BENEFICIAL-OWNER
@@ -64,7 +64,8 @@ controls:
     applies_when:
       - domain_is: [ekyc_onboarding]
     satisfied_when:
-      - text_matches: "screen|sanction|designated person|watchlist|designated-persons"
+      - text_matches: 'screen\w*|\bcheck\w*\b'
+      - text_matches: 'sanctions?|designated[- ]persons?|watchlist'
 
   - id: KYC.SCREEN.ONGOING
     title: Re-screen the customer base when lists change
@@ -97,7 +98,8 @@ controls:
     applies_when:
       - domain_is: [ekyc_onboarding]
     satisfied_when:
-      - text_matches: "not.{0,30}disclos|shall not.{0,40}(show|display|reveal|communicat)"
+      - text_matches: 'not.{0,30}(disclos|show|display|reveal|communicat)|keep.{0,40}confidential'
+      - text_matches: 'risk categor|risk rating|risk classif|\bthat category\b'
 
   - id: KYC.EDD.PEP
     title: Senior-management approval for politically exposed persons
@@ -150,7 +152,9 @@ controls:
     applies_when:
       - domain_is: [ekyc_onboarding]
     satisfied_when:
-      - text_matches: "consent"
+      - text_matches: 'obtain|collect|capture|request|require|record'
+      - text_matches: '\bconsent\b'
+      - text_absent: 'without.{0,20}consent|consent.{0,20}(optional|unnecessary)'
 
   - id: KYC.CONSENT.WITHDRAWAL
     title: Consent must be as easy to withdraw as to give
@@ -164,14 +168,16 @@ controls:
       - text_matches: "withdraw.{0,30}consent|revoke.{0,20}consent"
 
   - id: KYC.RECORDS.RETENTION
-    title: Retain identification records for five years after the relationship ends
+    title: Retain identification records after the relationship ends
     citations: ["RBI-MD-KYC:26(a)"]
     severity: blocker
     tags: [records]
     applies_when:
       - domain_is: [ekyc_onboarding]
     satisfied_when:
-      - text_matches: "retain|retention|preserve"
+      - text_matches: '\b(retain|preserve|keep)\b'
+      - text_matches: 'identification records?|identity records?|KYC records?|identity evidence|customer identit'
+      - text_matches: 'clos(?:e|ed|ure)|cessation|ceases?|relationship ends|terminat'
 
   - id: KYC.SECURITY.ACCESS-CONTROL
     title: Restrict and log access to customer identification records
@@ -184,14 +190,15 @@ controls:
       - text_matches: "access control|restrict.{0,25}access|role.?based|least privilege"
 
   - id: KYC.SECURITY.ENCRYPTION
-    title: Encrypt customer information in transit and at rest
-    citations: ["RBI-MD-KYC:27(b)", "RBI-CyberSecurity:4.2", "GDPR:Article 32.1(a)"]
+    title: Encrypt customer information transmitted over public networks
+    citations: ["RBI-MD-KYC:27(b)"]
     severity: blocker
     tags: [security]
     applies_when:
       - domain_is: [ekyc_onboarding]
     satisfied_when:
-      - text_matches: "encrypt|cryptograph|TLS|at rest"
+      - text_matches: 'encrypt|cryptograph|\bTLS\b'
+      - text_matches: 'transmi|in transit|public network|\bTLS\b'
 
   - id: KYC.AUDIT.TRAIL
     title: Preserve an audit trail of electronic verification
@@ -211,7 +218,8 @@ controls:
     applies_when:
       - domain_is: [ekyc_onboarding]
     satisfied_when:
-      - text_matches: "not.{0,40}(disclos|notify|inform|tip)"
+      - text_matches: 'not.{0,40}(disclos|notify|inform|tip|tell)'
+      - text_matches: 'suspicious transaction report|\bSTR\b'
 
   - id: PRIV.BREACH.NOTIFY
     title: Notify the Board and affected principals of a personal data breach
@@ -221,7 +229,8 @@ controls:
     applies_when:
       - domain_is: [ekyc_onboarding]
     satisfied_when:
-      - text_matches: "breach.{0,30}notif|notif.{0,30}breach|incident.{0,20}report"
+      - text_matches: '\b(?:personal data|data) breach\b|\bprivacy incident\b'
+      - text_matches: '\bnotif\w*|\breport\w*'
 
   - id: PRIV.MINIMISE
     title: Collect only the personal data necessary for the stated purpose
@@ -241,4 +250,5 @@ controls:
     applies_when:
       - domain_is: [ekyc_onboarding]
     satisfied_when:
-      - text_matches: "eras|delet|purg"
+      - text_matches: 'eras|delet|purg'
+      - text_matches: 'withdraw\w*.{0,40}consent|consent.{0,35}withdraw|revok\w*.{0,30}consent'

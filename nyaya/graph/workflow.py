@@ -19,17 +19,19 @@ human has not cleared.
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
+from langgraph.runtime import Runtime
 from langgraph.types import interrupt
-from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from nyaya.agents.compliance import map_requirement
 from nyaya.agents.extraction import extract
 from nyaya.agents.schemas import ExtractionContext
-from nyaya.core.enums import RiskLevel
+from nyaya.core.enums import DefectType, RequirementCategory, RiskLevel
 from nyaya.db import session_scope
 from nyaya.db.models import Project
 from nyaya.graph.gates import payload
@@ -41,6 +43,11 @@ from nyaya.rules.engine import evaluate, requirement_facts
 
 # Risk levels at which a requirement additionally needs security sign-off.
 _ELEVATED = {RiskLevel.HIGH, RiskLevel.CRITICAL}
+
+
+@dataclass(slots=True)
+class WorkflowContext:
+    session: AsyncSession
 
 
 async def node_extract(state: WorkflowState) -> dict[str, Any]:
@@ -55,7 +62,6 @@ async def node_extract(state: WorkflowState) -> dict[str, Any]:
         ),
     )
     return {"requirements": result.requirements, "unclear": result.unclear}
-
 
 
 def node_baseline_gate(state: WorkflowState) -> dict[str, Any]:
@@ -85,7 +91,50 @@ def node_baseline_gate(state: WorkflowState) -> dict[str, Any]:
             },
         )
     )
-    return _record(decision, "requirement_baseline")
+    return _record(state, decision, "requirement_baseline")
+
+
+def node_conflict_gate(state: WorkflowState) -> dict[str, Any]:
+    conflicts = [
+        {"requirement": item.requirement.statement, "finding": defect.detail}
+        for item in state.get("requirements", [])
+        for defect in item.defects
+        if defect.defect_type == DefectType.CONFLICTING_EXPECTATION
+    ]
+    if not conflicts:
+        return {}
+    gate = "conflict_resolution"
+    return _record(state, interrupt(payload(gate, {"conflicts": conflicts})), gate)
+
+
+def node_security_gate(state: WorkflowState) -> dict[str, Any]:
+    statements = [
+        item.requirement.statement
+        for item in state.get("requirements", [])
+        if item.requirement.risk_level in _ELEVATED
+        and {RequirementCategory.SECURITY, RequirementCategory.PRIVACY}.intersection(
+            item.requirement.categories
+        )
+    ]
+    if not statements:
+        return {}
+    gate = "security_requirements"
+    return _record(state, interrupt(payload(gate, {"statements": statements})), gate)
+
+
+def node_architecture_gate(state: WorkflowState) -> dict[str, Any]:
+    statements = [
+        item.requirement.statement
+        for item in state.get("requirements", [])
+        if item.requirement.risk_level is RiskLevel.CRITICAL
+        and {RequirementCategory.INTEGRATION, RequirementCategory.AVAILABILITY}.intersection(
+            item.requirement.categories
+        )
+    ]
+    if not statements:
+        return {}
+    gate = "architecture_requirements"
+    return _record(state, interrupt(payload(gate, {"statements": statements})), gate)
 
 
 async def node_map_compliance(state: WorkflowState) -> dict[str, Any]:
@@ -145,7 +194,7 @@ def node_interpretation_gate(state: WorkflowState) -> dict[str, Any]:
             },
         )
     )
-    return _record(decision, "regulatory_interpretation")
+    return _record(state, decision, "regulatory_interpretation")
 
 
 def node_assess_coverage(state: WorkflowState) -> dict[str, Any]:
@@ -193,7 +242,7 @@ def node_gap_gate(state: WorkflowState) -> dict[str, Any]:
             },
         )
     )
-    return _record(decision, "compliance_gap")
+    return _record(state, decision, "compliance_gap")
 
 
 def node_recommend_sdlc(state: WorkflowState) -> dict[str, Any]:
@@ -214,17 +263,13 @@ def node_sdlc_gate(state: WorkflowState) -> dict[str, Any]:
                 "close_call": recommendation.close_call if recommendation else False,
                 "notes": recommendation.notes if recommendation else [],
                 "consistency_ratio": (
-                    round(recommendation.weights.consistency_ratio, 4)
-                    if recommendation
-                    else None
+                    round(recommendation.weights.consistency_ratio, 4) if recommendation else None
                 ),
-                "explanation": (
-                    recommendation.ranking.explain() if recommendation else []
-                ),
+                "explanation": (recommendation.ranking.explain() if recommendation else []),
             },
         )
     )
-    return _record(decision, "sdlc_selection")
+    return _record(state, decision, "sdlc_selection")
 
 
 def _derive_factors(state: WorkflowState) -> dict[str, float]:
@@ -239,7 +284,7 @@ def _derive_factors(state: WorkflowState) -> dict[str, float]:
     )
 
 
-def _record(decision: Any, gate: str) -> dict[str, Any]:
+def _record(state: WorkflowState, decision: Any, gate: str) -> dict[str, Any]:
     """Normalise a resumed decision into state.
 
     A rejection halts the run rather than being noted and ignored: a gate whose
@@ -255,29 +300,23 @@ def _record(decision: Any, gate: str) -> dict[str, Any]:
         "comment": decision.get("comment", ""),
         "at": datetime.now(UTC).isoformat(),
     }
-    update: dict[str, Any] = {"decisions": [entry]}
+    update: dict[str, Any] = {"decisions": [*state.get("decisions", []), entry]}
     if entry["decision"] == "reject":
         update["halted"] = True
         update["halt_reason"] = f"{gate} rejected by {entry['actor']}: {entry['comment']}"
     return update
 
 
-async def node_persist(state: WorkflowState) -> dict[str, Any]:
+async def node_persist(state: WorkflowState, runtime: Runtime[WorkflowContext]) -> dict[str, Any]:
     """Persist the completed workflow run once approved."""
     if state.get("halted") or not state.get("project_id"):
         return {}
-    try:
-        project_uuid = uuid.UUID(state["project_id"])
+    if runtime.context is not None:
+        await persist_run(runtime.context.session, state)
+    else:
         async with session_scope() as session:
-            project = (
-                await session.execute(
-                    select(Project).where(Project.id == project_uuid)
-                )
-            ).scalar_one_or_none()
-            if project is not None:
+            if await session.get(Project, uuid.UUID(state["project_id"])) is not None:
                 await persist_run(session, state)
-    except Exception:
-        pass
     return {}
 
 
@@ -288,9 +327,12 @@ def build_graph(checkpointer: Any | None = None):
     a pause in a process, and with one it is a suspended run that survives
     restarts and can be resumed by a different person days later.
     """
-    graph = StateGraph(WorkflowState)
+    graph = StateGraph(WorkflowState, context_schema=WorkflowContext)
 
     graph.add_node("extract", node_extract)
+    graph.add_node("conflict_gate", node_conflict_gate)
+    graph.add_node("security_gate", node_security_gate)
+    graph.add_node("architecture_gate", node_architecture_gate)
     graph.add_node("baseline_gate", node_baseline_gate)
     graph.add_node("map_compliance", node_map_compliance)
     graph.add_node("interpretation_gate", node_interpretation_gate)
@@ -303,22 +345,41 @@ def build_graph(checkpointer: Any | None = None):
     graph.add_edge(START, "extract")
     graph.add_edge("extract", "baseline_gate")
     graph.add_conditional_edges(
-        "baseline_gate", _continue_or_halt,
+        "conflict_gate",
+        _continue_or_halt,
+        {"continue": "security_gate", "halt": END},
+    )
+    graph.add_conditional_edges(
+        "security_gate",
+        _continue_or_halt,
+        {"continue": "architecture_gate", "halt": END},
+    )
+    graph.add_conditional_edges(
+        "architecture_gate",
+        _continue_or_halt,
         {"continue": "map_compliance", "halt": END},
+    )
+    graph.add_conditional_edges(
+        "baseline_gate",
+        _continue_or_halt,
+        {"continue": "conflict_gate", "halt": END},
     )
     graph.add_edge("map_compliance", "interpretation_gate")
     graph.add_conditional_edges(
-        "interpretation_gate", _continue_or_halt,
+        "interpretation_gate",
+        _continue_or_halt,
         {"continue": "assess_coverage", "halt": END},
     )
     graph.add_edge("assess_coverage", "gap_gate")
     graph.add_conditional_edges(
-        "gap_gate", _continue_or_halt,
+        "gap_gate",
+        _continue_or_halt,
         {"continue": "recommend_sdlc", "halt": END},
     )
     graph.add_edge("recommend_sdlc", "sdlc_gate")
     graph.add_conditional_edges(
-        "sdlc_gate", _continue_or_halt,
+        "sdlc_gate",
+        _continue_or_halt,
         {"continue": "persist", "halt": END},
     )
     graph.add_edge("persist", END)

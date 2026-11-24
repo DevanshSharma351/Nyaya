@@ -1,6 +1,6 @@
 import json
-import uuid
 import random
+import uuid
 
 elements = []
 
@@ -41,7 +41,7 @@ def add_text(x, y, text, font_size=15, stroke="#1e1e1e", align="left", font_fami
     lines = text.split("\n")
     line_h = font_size * 1.3
     h = len(lines) * line_h
-    w = max(len(l) for l in lines) * (font_size * 0.58)
+    w = max(len(line) for line in lines) * (font_size * 0.58)
     
     el = {
         "id": el_id,

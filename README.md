@@ -11,7 +11,7 @@
 
 <p align="center">
   <b>Traceable, provably grounded requirements engineering for regulated financial institutions.</b><br>
-  Strict EARS formatting • Adversarial citation verification • 4 Durable human-in-the-loop governance gates • Mathematical AHP & TOPSIS SDLC selection.
+  Strict EARS formatting • Citation verification • Durable human review checkpoints • AHP & TOPSIS SDLC selection.
 </p>
 
 </div>
@@ -33,7 +33,7 @@ In regulated banking software (e.g., eKYC customer onboarding, RBI Master Direct
 **Nyaya enforces strict epistemological rigor:**
 - **No Unchecked Generation**: LLMs propose structured requirements and legal citations; deterministic linters and cross-encoders verify them.
 - **Explicit StateGraph DAG**: The orchestrator is a predictable state machine checkpointed in PostgreSQL — never an unconstrained swarm.
-- **Mandatory Human Governance**: Four durable interrupt gates (`requirement_baseline`, `regulatory_interpretation`, `compliance_gap`, `sdlc_selection`) halt execution until authorized stakeholders sign off.
+- **Human Review**: Baseline, regulatory interpretation, compliance gaps, and SDLC selection pause for review. Conflicts and flagged security or architecture requirements add specialist checkpoints. Reviewer roles in the local prototype are submitted through the UI.
 - **Mathematical Decision Making**: Software lifecycle (SDLC) selection uses mathematical Multi-Criteria Decision Analysis (AHP with Consistency Ratio $CR < 0.10$ and TOPSIS Euclidean ranking), rather than LLM intuition.
 
 ---
@@ -118,7 +118,7 @@ Minimal client state, real-time glassmorphic dashboard, and containerized deploy
 
 ## The 5-Stage Verification Workflow
 
-In [`nyaya/graph/workflow.py`](nyaya/graph/workflow.py), the execution pipeline runs 5 computational stages separated by 4 durable human verification gates:
+[`nyaya/graph/workflow.py`](nyaya/graph/workflow.py) checkpoints five computational stages and their review decisions in PostgreSQL. The diagram shows the core path. Flagged conflicts, security requirements, and architecture requirements add review between the baseline and compliance mapping.
 
 ```
 [START]
@@ -154,7 +154,7 @@ In [`nyaya/graph/workflow.py`](nyaya/graph/workflow.py), the execution pipeline 
  [END]
 ```
 
-### The 4 Human Governance Gates:
+### Core Review Checkpoints
 1. **Requirement Baseline Gate** (`requirement_baseline`):
    - *Competent Roles*: Product Owner, Business Analyst.
    - *Action*: Inspects total requirement count, untestable requirements, elevated risk items, and flagged ambiguities before downstream work begins.
@@ -165,8 +165,8 @@ In [`nyaya/graph/workflow.py`](nyaya/graph/workflow.py), the execution pipeline 
    - *Competent Roles*: Compliance Officer, Risk Manager.
    - *Action*: Reviews blocking gaps identified against mandatory rule packs (e.g., 5-year KYC record retention). Must formally resolve or sign a waiver.
 4. **SDLC Selection Gate** (`sdlc_selection`):
-   - *Competent Roles*: Software Architect, Engineering Lead.
-   - *Action*: Reviews mathematical AHP/TOPSIS recommendation, consistency ratio, and sensitivity notes before committing engineering teams.
+   - *Sign-off*: Project Manager, Architect, Security, and Compliance.
+   - *Action*: Each role reviews the AHP/TOPSIS recommendation, consistency ratio, and sensitivity notes.
 
 ---
 
@@ -209,8 +209,8 @@ In [`nyaya/graph/workflow.py`](nyaya/graph/workflow.py), the execution pipeline 
 ## Getting Started
 
 ### Prerequisites
-- **Docker & Docker Compose** (for PostgreSQL 16 + pgvector and MinIO)
-- **Python 3.12+** and **uv** package manager
+- **Docker & Docker Compose** (for PostgreSQL 17 + pgvector and MinIO)
+- **Python 3.12** and the **uv** package manager
 - **Node.js 20+** and **npm**
 
 ### 1. Clone & Environment Setup
@@ -222,8 +222,8 @@ cp .env.example .env
 
 ### 2. Start Infrastructure
 ```bash
-# Start PostgreSQL (port 5432) and MinIO (port 9000/9001)
-make up
+# Start PostgreSQL (host port 5433) and MinIO (ports 9000/9001)
+docker compose up -d --wait postgres minio
 ```
 
 ### 3. Install Dependencies
@@ -232,8 +232,17 @@ make up
 uv sync --extra dev
 
 # Frontend dependencies
-cd web && npm install && cd ..
+npm --prefix web ci
+
+# Create missing application tables without dropping data
+make db-init
 ```
+
+For local inference, start Ollama and check `ollama list` for the models named in `.env`. Run `make seed` if you want the bundled regulatory corpus and example project.
+
+The corpus contains bundled excerpts for the eKYC demo. RBI-MD-KYC version 2 is a simulated amendment for impact analysis. The Corpus API resolves current clauses by default and accepts `?version=1` on a clause lookup to inspect historical evidence. Rule matches in Coverage are preliminary findings for Workflow review.
+
+Optional cross-encoder and entailment models load from the local Hugging Face cache. To fetch them before running a demo, use `uv run hf download BAAI/bge-reranker-v2-m3` and `uv run hf download MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli`, or use the model IDs configured in `.env`.
 
 ### 4. Run the Platform
 In separate terminal windows:

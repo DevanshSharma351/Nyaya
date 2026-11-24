@@ -1,6 +1,6 @@
-import json
-import uuid
 import random
+import uuid
+
 
 def create_element(elem_type, x, y, width, height, text=None, bg_color="transparent", stroke_color="#1e1e1e", stroke_width=1, fill_style="solid", font_size=16, font_family=1, text_align="center", roundness=True, stroke_style="solid"):
     elem_id = str(uuid.uuid4())[:8]

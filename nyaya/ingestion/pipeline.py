@@ -14,13 +14,14 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nyaya.core import ledger
 from nyaya.db.models import Clause, SourceDocument
 from nyaya.ingestion.clause_splitter import ClauseNode, flatten, split_clauses
 from nyaya.ingestion.parsers import content_hash, parse
+from nyaya.ingestion.pii import redact_intake
 from nyaya.retrieval.embedder import embed_texts
 
 
@@ -57,30 +58,39 @@ async def ingest_document(
     path = Path(path)
     digest = content_hash(path)
 
-    existing = (
-        (
-            await session.execute(
-                select(SourceDocument)
-                .where(SourceDocument.short_code == short_code)
-                .order_by(SourceDocument.created_at.desc())
-            )
-        )
-        .scalars()
-        .first()
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(632254, hashtext(:code))"), {"code": short_code}
     )
-
-    if existing is not None and existing.content_hash == digest:
+    same_version = await session.scalar(select(SourceDocument).where(
+        SourceDocument.short_code == short_code, SourceDocument.version == version,
+    ))
+    if same_version is not None:
+        if same_version.content_hash != digest:
+            raise ValueError(f"{short_code} v{version} already exists with different content; use a new version")
         return IngestionReport(
-            document_id=existing.id,
+            document_id=same_version.id,
             short_code=short_code,
-            version=existing.version,
+            version=version,
             clauses_created=0,
             skipped=True,
         )
+    existing = await session.scalar(
+        select(SourceDocument)
+        .where(SourceDocument.short_code == short_code, SourceDocument.effective_to.is_(None))
+        .order_by(SourceDocument.effective_from.desc().nulls_last(), SourceDocument.created_at.desc())
+        .limit(1)
+    )
+    replacement_date = effective_from or date.today()
+    if existing is not None and existing.effective_from and replacement_date <= existing.effective_from:
+        raise ValueError(f"{short_code} v{version} must take effect after the current version begins")
 
     raw_text = parse(path)
+    if doc_type != "regulation":
+        raw_text = redact_intake(raw_text)
     roots = split_clauses(raw_text, short_code=short_code)
     nodes = flatten(roots)
+    if not nodes:
+        raise ValueError(f"{short_code} v{version} contains no clauses")
 
     document = SourceDocument(
         title=title,
@@ -89,7 +99,7 @@ async def ingest_document(
         jurisdiction=jurisdiction,
         doc_type=doc_type,
         version=version,
-        effective_from=effective_from,
+        effective_from=replacement_date if existing is not None else effective_from,
         content_hash=digest,
         source_uri=str(path),
         supersedes_id=existing.id if existing else None,
@@ -101,7 +111,7 @@ async def ingest_document(
     # that citations made against it remain resolvable and change-impact
     # analysis can compare the two.
     if existing is not None:
-        existing.effective_to = effective_from or date.today()
+        existing.effective_to = replacement_date
 
     vectors: list[list[float]] = []
     if embed and nodes:

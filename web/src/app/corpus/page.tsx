@@ -96,8 +96,8 @@ function CorpusModule() {
     <ModuleShell
       pathname="/corpus"
       eyebrow="Corpus"
-      title="What the regulation actually says"
-      lede="Three sources, split into individually addressable clauses. Every citation the system emits resolves to one of these, or it is rejected before a reader ever sees it."
+      title="Regulatory demo corpus"
+      lede="Explore the bundled regulatory excerpts and their clause references. The eKYC impact demo also uses a simulated amendment."
       scene={graph && <CorpusLayer graph={graph} onHover={setHovered} focus={selected} />}
       sceneCaption={
         hovered ? (

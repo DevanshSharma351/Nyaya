@@ -10,7 +10,6 @@
  * text, and unsupported ones are reported as defects rather than smoothed over.
  */
 
-import dynamic from "next/dynamic";
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Block, ModuleShell, Rationale } from "@/components/chrome/ModuleShell";
@@ -26,11 +25,6 @@ import {
   type Coverage,
   type ProjectUsage,
 } from "@/lib/api";
-
-const RequirementLayer = dynamic(
-  () => import("@/components/scenes/RequirementLayer"),
-  { ssr: false },
-);
 
 const SEED =
   "Compliance officer: for any customer we onboard remotely we have to check " +
@@ -51,10 +45,13 @@ export default function RequirementsPage() {
 
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [projectLoading, setProjectLoading] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [stakeholderRole, setStakeholderRole] = useState("");
 
   const result = job.result ?? null;
   const error = job.error ?? null;
-  const busy = job.state === "running" || projectLoading;
+  const busy = job.state === "running" || projectLoading || importing;
 
   // Seeded from the job when one exists, so returning to the module restores
   // the text that was actually submitted rather than the placeholder.
@@ -106,21 +103,19 @@ export default function RequirementsPage() {
         model: "database-persisted",
         repair_rounds: 0,
         notes: [`Persisted requirements repository for "${proj.name}"`],
-        testable_fraction: 1.0,
-        unclear: [],
+        testable_fraction: reqs.length ? reqs.filter((r) => !r.defects.some((d) => d.severity === "major" || d.severity === "blocker")).length / reqs.length : 0,
+        unclear: proj.open_questions,
         requirements: reqs.map((r) => ({
           statement: r.statement,
-          rationale: r.statement.toLowerCase().includes("sanctions")
-            ? "Statutory sanctions compliance obligation"
-            : "Persisted requirement",
+          rationale: r.rationale,
           categories: r.categories ?? [],
           priority: r.priority,
           risk_level: r.risk_level,
           acceptance_criteria: r.acceptance_criteria ?? [],
-          assumptions: [],
-          quoted_source: r.ref,
+          assumptions: r.assumptions,
+          quoted_source: r.quoted_source,
           ears_pattern: r.statement.toLowerCase().startsWith("when ") ? "event_driven" : "ubiquitous",
-          is_testable: true,
+          is_testable: !r.defects.some((d) => d.severity === "major" || d.severity === "blocker"),
           defects: (r.defects ?? []).map((d) => ({
             type: d.defect_type,
             severity: d.severity,
@@ -154,15 +149,14 @@ export default function RequirementsPage() {
 
     if (isNew) {
       clearJob();
-      setText("");
-      setSelectedProjectId(null);
+      queueMicrotask(() => setText(""));
       sessionStorage.removeItem("nyaya_project_id");
       return;
     }
 
     const savedId = typeof window !== "undefined" ? sessionStorage.getItem("nyaya_project_id") : null;
     if (savedId) {
-      void loadProjectData(savedId);
+      queueMicrotask(() => void loadProjectData(savedId));
     } else {
       api.projects().then((list) => {
         if (list.length > 0) {
@@ -176,7 +170,23 @@ export default function RequirementsPage() {
     clearJob();
     setSelectedProjectId(null);
     setText("");
+    setAnswers({});
+    setImportError(null);
     sessionStorage.removeItem("nyaya_project_id");
+  }
+
+  async function importBrief(file: File) {
+    setImporting(true);
+    setImportError(null);
+    try {
+      const imported = await api.importBrief(file);
+      handleNewBrief();
+      setText(imported.text);
+    } catch (error) {
+      setImportError((error as Error).message);
+    } finally {
+      setImporting(false);
+    }
   }
 
   async function handleLoadUsage() {
@@ -245,7 +255,9 @@ export default function RequirementsPage() {
     await runJob(
       text,
       async () => {
-        const extracted = await api.extract(text, clarifications);
+        const extracted = await api.extract(
+          text, clarifications, withAnswers ? projectId ?? undefined : undefined, stakeholderRole || undefined,
+        );
         if (extracted.project_id) {
           setSelectedProjectId(extracted.project_id);
           sessionStorage.setItem("nyaya_project_id", extracted.project_id);
@@ -277,8 +289,6 @@ export default function RequirementsPage() {
       eyebrow="Requirements"
       title="Stakeholder prose into testable obligations"
       lede="Rewritten into EARS form, with compounds split so each obligation can be approved and traced separately."
-      scene={<RequirementLayer requirements={result?.requirements ?? null} />}
-      sceneCaption="Scroll the page and the field assembles. It starts scattered, which is what stakeholder language is, and resolves into one column per extracted requirement — a column is as tall as the requirement has acceptance criteria, its shade is the risk level, and the red share is how much of it is defective. Before extraction runs there is nothing to assemble into, so it stays scattered."
     >
       <ProjectSelector
         currentProjectId={selectedProjectId}
@@ -288,6 +298,32 @@ export default function RequirementsPage() {
       />
       <Block>
         <div className="glass-raised specular p-6 lg:p-8">
+          <div className="mb-4 flex flex-wrap gap-4">
+            <label className="caption flex flex-col gap-1">
+              Import a brief
+              <input
+                type="file"
+                accept=".pdf,.docx,.txt,.md"
+                disabled={busy}
+                onChange={(event) => {
+                  const file = event.currentTarget.files?.[0];
+                  event.currentTarget.value = "";
+                  if (file) void importBrief(file);
+                }}
+              />
+            </label>
+            <label className="caption flex flex-col gap-1">
+              Contributor role
+              <select value={stakeholderRole} onChange={(event) => setStakeholderRole(event.target.value)}>
+                <option value="">General brief</option>
+                {[
+                  "customer", "business_analyst", "product_owner", "project_manager", "architect",
+                  "developer", "security", "compliance", "legal", "risk", "operations", "auditor", "regulator",
+                ].map((role) => <option key={role} value={role}>{role.replaceAll("_", " ")}</option>)}
+              </select>
+            </label>
+          </div>
+          {importError && <Failure message={importError} />}
           <textarea
             value={text}
             onChange={(event) => setText(event.target.value)}
@@ -674,9 +710,14 @@ export default function RequirementsPage() {
                       <Badge tone="var(--accent)">{genArtefactsResult.use_cases.length} use cases</Badge>
                       <Badge tone="var(--accent)">{genArtefactsResult.risks.length} risks</Badge>
                       <Badge tone={genArtefactsResult.traceability_coverage === 1 ? "var(--confirmed)" : "var(--review)"}>
-                        {Math.round(genArtefactsResult.traceability_coverage * 100)}% traceability
+                        {genArtefactsResult.traceability.filter((row) => row.gaps.length === 0).length}/{genArtefactsResult.traceability.length} fully linked requirements
                       </Badge>
                     </div>
+                    {genArtefactsResult.traceability.length > 0 && genArtefactsResult.traceability.every((row) => row.citations.length === 0) && (
+                      <p className="caption mt-2 mb-0">
+                        No verified regulatory citations are saved. Generate and review the mappings in <Link href="/workflow">Workflow</Link>.
+                      </p>
+                    )}
                     {genArtefactsResult.open_issues.length > 0 && (
                       <div className="caption mt-2" style={{ color: "var(--review)" }}>
                         {genArtefactsResult.open_issues.length} open issue{genArtefactsResult.open_issues.length > 1 ? "s" : ""}
@@ -689,13 +730,13 @@ export default function RequirementsPage() {
                 {genCoverageResult && genCoverageResult.length > 0 && (
                   <div className="glass mt-4 p-4" style={{ borderLeft: "2px solid var(--clause)" }}>
                     <div className="body mb-2" style={{ fontWeight: 600 }}>
-                      Compliance Coverage
+                      Control Pack Coverage
                     </div>
                     {genCoverageResult.map((pack) => (
                       <div key={pack.pack} className="mb-2">
                         <div className="flex flex-wrap items-center gap-2">
                           <Badge tone={pack.coverage_ratio >= 0.8 ? "var(--confirmed)" : "var(--review)"}>
-                            {pack.pack} — {Math.round(pack.coverage_ratio * 100)}%
+                            {pack.pack} · {pack.controls.filter((control) => !control.is_gap).length}/{pack.controls.length} controls matched ({Math.round(pack.coverage_ratio * 100)}%)
                           </Badge>
                           {pack.blocking_gaps.length > 0 && (
                             <Badge tone="var(--gap)">

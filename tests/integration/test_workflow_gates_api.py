@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import uuid
+from types import SimpleNamespace
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from langgraph.checkpoint.memory import InMemorySaver
 
-from nyaya.agents.extraction import AnalysedRequirement
+from nyaya.agents.compliance import ComplianceResult
+from nyaya.agents.extraction import AnalysedRequirement, ExtractionResult
 from nyaya.agents.schemas import ExtractedRequirement
 from nyaya.api.app import create_app
-from nyaya.api.deps import db_session
+from nyaya.api.deps import db_session, workflow_runner
 from nyaya.core.enums import (
     ApprovalStatus,
     Priority,
@@ -19,6 +22,7 @@ from nyaya.core.enums import (
 )
 from nyaya.core.ledger import verify_chain
 from nyaya.db.models import Project, Requirement
+from nyaya.graph.runner import WorkflowRunner, postgres_workflow_runner
 
 
 def _requirement(statement: str, risk: RiskLevel = RiskLevel.HIGH) -> AnalysedRequirement:
@@ -42,6 +46,8 @@ def _requirement(statement: str, risk: RiskLevel = RiskLevel.HIGH) -> AnalysedRe
 def app(session):
     application = create_app()
     application.dependency_overrides[db_session] = lambda: session
+    runner = WorkflowRunner(InMemorySaver())
+    application.dependency_overrides[workflow_runner] = lambda: runner
     return application
 
 
@@ -208,3 +214,117 @@ async def test_workflow_rejection_halts(session, client: AsyncClient):
     status_resp = await client.get(f"/api/projects/{project_id}/workflow/status")
     assert status_resp.status_code == 200
     assert status_resp.json()["status"] == "halted"
+
+
+async def test_project_trace_and_gate_survive_restart(session, app, monkeypatch):
+    source = "Applicants must be verified before their accounts are activated."
+    question = "Which documents are acceptable?"
+    item = _requirement("The system shall verify applicants before account activation.")
+    item.requirement.quoted_source = source
+
+    async def extract_brief(text, **kwargs):
+        return ExtractionResult(requirements=[item], unclear=[question], source_text=text)
+
+    async def map_requirement(session, requirement, **kwargs):
+        return ComplianceResult(requirement_statement=requirement.statement)
+
+    monkeypatch.setattr("nyaya.api.routers.analysis.extract", extract_brief)
+    monkeypatch.setattr("nyaya.graph.workflow.map_requirement", map_requirement)
+    conninfo = session.bind.url.render_as_string(hide_password=False).replace(
+        "postgresql+psycopg",
+        "postgresql",
+        1,
+    )
+    monkeypatch.setattr(
+        "nyaya.graph.runner.get_settings",
+        lambda: SimpleNamespace(sync_database_url=conninfo),
+    )
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        email = "applicant@example.test"
+        imported = await client.post(
+            "/api/analysis/brief/text",
+            files={"upload": ("brief.txt", f"{source} Contact {email}.", "text/plain")},
+        )
+        assert imported.status_code == 200, imported.text
+        assert source in imported.json()["text"]
+        assert email not in imported.json()["text"]
+        extracted = await client.post("/api/analysis/extract", json={"text": source})
+        assert extracted.status_code == 200, extracted.text
+        project_id = extracted.json()["project_id"]
+        path = f"/api/projects/{project_id}"
+        answer = "A government-issued ID."
+        clarified = await client.post(
+            "/api/analysis/extract",
+            json={
+                "text": source,
+                "project_id": project_id,
+                "clarifications": [{"question": question, "answer": answer}],
+            },
+        )
+        assert clarified.status_code == 200, clarified.text
+        assert clarified.json()["project_id"] == project_id
+        assert answer in (await client.get(path)).json()["description"]
+        requirements = (await client.get(f"{path}/requirements")).json()
+        assert len(requirements) == 1
+        artefacts = (await client.post(f"{path}/artefacts/generate")).json()
+        assert artefacts["traceability"][0]["ref"] == requirements[0]["ref"]
+        assert artefacts["traceability"][0]["source_quote"] == source
+        assert artefacts["open_issues"] == [question]
+        # ASGITransport uses the test session directly. Finish its transaction
+        # before the saver runs its concurrent index migrations.
+        await session.commit()
+
+        async with postgres_workflow_runner() as runner:
+            app.dependency_overrides[workflow_runner] = lambda: runner
+            started = await client.post(f"{path}/workflow/start")
+            assert started.status_code == 200, started.text
+            assert started.json()["current_gate"] == "requirement_baseline"
+            await session.commit()
+
+        async with postgres_workflow_runner() as runner:
+            try:
+                app.dependency_overrides[workflow_runner] = lambda: runner
+                resumed = await client.get(f"{path}/workflow/status")
+                assert resumed.status_code == 200, resumed.text
+                assert resumed.json()["gate_payload"]["summary"]["open_questions"] == [question]
+                roles = [
+                    ("requirement_baseline", "business_analyst"),
+                    ("security_requirements", "security"),
+                    ("regulatory_interpretation", "compliance"),
+                    ("compliance_gap", "risk"),
+                    ("sdlc_selection", "project_manager"),
+                    ("sdlc_selection", "architect"),
+                    ("sdlc_selection", "security"),
+                    ("sdlc_selection", "compliance"),
+                ]
+                status = resumed.json()
+                for gate, role in roles:
+                    assert status["current_gate"] == gate
+                    decided = await client.post(
+                        f"{path}/workflow/decide",
+                        json={"gate": gate, "actor": role, "role": role},
+                    )
+                    assert decided.status_code == 200, decided.text
+                    status = decided.json()
+                    await session.commit()
+                assert status["status"] == "completed"
+                approved = (await client.get(f"{path}/requirements")).json()
+                assert len(approved) == 1
+                assert approved[0]["id"] == requirements[0]["id"]
+                assert approved[0]["approval_status"] == "approved"
+                export = (await client.post(f"{path}/artefacts/generate")).json()
+                assert export["traceability"][0]["approval_status"] == "approved"
+                edited = await client.patch(
+                    f"{path}/requirements/{approved[0]['id']}",
+                    json={"statement": "The system shall verify each applicant."},
+                )
+                assert edited.status_code == 200, edited.text
+                assert edited.json()["approval_status"] == "draft"
+                assert edited.json()["ref"] == approved[0]["ref"]
+                assert edited.json()["id"] != approved[0]["id"]
+            finally:
+                await session.rollback()
+                await runner.checkpointer.adelete_thread(project_id)
+                await client.delete(path)

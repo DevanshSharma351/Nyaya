@@ -9,7 +9,7 @@
  */
 
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { GitBranch, RefreshCw, Sparkles } from "lucide-react";
 import { useJob } from "@/components/chrome/Jobs";
 import { Block, ModuleShell, Rationale } from "@/components/chrome/ModuleShell";
@@ -79,27 +79,25 @@ export default function LifecyclePage() {
   const { job, run: runJob } = useJob<SDLCFromBrief>("lifecycle");
   const [customBrief, setCustomBrief] = useState(job.input ?? "");
   const [showCustomPrompt, setShowCustomPrompt] = useState(false);
+  const [customMode, setCustomMode] = useState(false);
+  const projectRequest = useRef(0);
 
-  const loadSdlcForProject = useCallback(async (id: string) => {
+  const loadSdlcForProject = useCallback(async (id: string, regenerate = false) => {
+    const request = ++projectRequest.current;
+    setCustomMode(false);
+    setSelectedProjectId(id);
+    setProjectSdlc(null);
     setProjectLoading(true);
     setProjectError(null);
     try {
-      const data = await api.projectSdlc(id);
+      const data = await (regenerate ? api.generateSdlc(id) : api.projectSdlc(id));
+      if (request !== projectRequest.current) return;
       setProjectSdlc(data);
       sessionStorage.setItem("nyaya_project_id", id);
-      setSelectedProjectId(id);
-    } catch {
-      // Fallback: trigger generate endpoint if not yet stored
-      try {
-        const generated = await api.generateSdlc(id);
-        setProjectSdlc(generated);
-        sessionStorage.setItem("nyaya_project_id", id);
-        setSelectedProjectId(id);
-      } catch (genErr: unknown) {
-        setProjectError((genErr as Error).message || "Failed to load project SDLC recommendation");
-      }
+    } catch (error) {
+      if (request === projectRequest.current) setProjectError((error as Error).message);
     } finally {
-      setProjectLoading(false);
+      if (request === projectRequest.current) setProjectLoading(false);
     }
   }, []);
 
@@ -159,9 +157,19 @@ export default function LifecyclePage() {
 
   async function deriveFromCustomBrief() {
     if (!customBrief.trim()) return;
+    const request = ++projectRequest.current;
+    setCustomMode(true);
+    setProjectLoading(false);
     await runJob(
       customBrief,
-      () => api.sdlcFromBrief(customBrief),
+      async () => {
+        const result = await api.sdlcFromBrief(customBrief);
+        if (request === projectRequest.current) {
+          setSelectedProjectId(result.project_id);
+          sessionStorage.setItem("nyaya_project_id", result.project_id);
+        }
+        return result;
+      },
       (next) => ({
         label: next.recommendation.recommended.replace(/_/g, " "),
         detail: `derived from ${next.requirements_extracted} requirements`,
@@ -171,9 +179,9 @@ export default function LifecyclePage() {
   }
 
   // Active derived recommendation: either from selected project or from custom job
-  const activeSdlc = projectSdlc ?? job.result ?? null;
-  const busy = projectLoading || job.state === "running";
-  const error = projectError ?? job.error ?? null;
+  const activeSdlc = customMode ? job.result ?? null : projectSdlc;
+  const busy = customMode ? job.state === "running" : projectLoading;
+  const error = customMode ? job.error ?? null : projectError;
 
   return (
     <ModuleShell
@@ -207,6 +215,7 @@ export default function LifecyclePage() {
                 {activeSdlc.recommendation.close_call && (
                   <Badge tone="var(--review)">Close Call — Architect Decision</Badge>
                 )}
+                {activeSdlc.is_stale && <Badge tone="var(--review)">Requirements changed</Badge>}
               </div>
               <p className="caption text-[var(--text-secondary)] mt-1 mb-0 max-w-2xl">
                 Derived mathematically from {activeSdlc.requirements_extracted} verified requirements. Consistency ratio {activeSdlc.recommendation.consistency_ratio} &le; 0.10 (mathematically consistent).
@@ -215,8 +224,8 @@ export default function LifecyclePage() {
 
             <Button
               variant="quiet"
-              onClick={() => selectedProjectId && loadSdlcForProject(selectedProjectId)}
-              disabled={busy}
+              onClick={() => activeSdlc.project_id && loadSdlcForProject(activeSdlc.project_id, true)}
+              disabled={busy || !activeSdlc.project_id}
             >
               <RefreshCw size={14} className={busy ? "animate-spin" : ""} />
               Re-compute SDLC

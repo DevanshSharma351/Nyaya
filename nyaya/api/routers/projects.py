@@ -12,14 +12,16 @@ import contextlib
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from nyaya.api.deps import db_session
+from nyaya.agents.extraction import inspect
+from nyaya.agents.schemas import ExtractedRequirement
+from nyaya.api.deps import db_session, workflow_runner
+from nyaya.api.routers.analysis import record_sdlc_snapshot
 from nyaya.api.schemas import (
     ActivityOut,
     AgentUsageOut,
@@ -51,7 +53,14 @@ from nyaya.api.schemas import (
     WorkflowStatusOut,
 )
 from nyaya.artefacts import build as build_artefacts
-from nyaya.core.enums import Priority, RequirementCategory, RiskLevel, StakeholderRole
+from nyaya.core.enums import (
+    ApprovalStatus,
+    EvidenceRelation,
+    Priority,
+    RequirementCategory,
+    RiskLevel,
+    StakeholderRole,
+)
 from nyaya.db.models import (
     Approval,
     AuditEvent,
@@ -69,11 +78,14 @@ from nyaya.db.models import (
     Utterance,
 )
 from nyaya.graph.gates import GATES, UnauthorisedApproverError
-from nyaya.graph.runner import get_workflow_runner
+from nyaya.graph.persistence import project_open_questions
+from nyaya.graph.runner import WorkflowConflictError, WorkflowRunner
+from nyaya.ingestion.pii import redact_intake
 from nyaya.mcda.derive import derive
 from nyaya.mcda.sdlc import recommend
+from nyaya.mcda.workflow import CADENCE, TRACEABILITY
 from nyaya.mcda.workflow import generate as generate_workflow
-from nyaya.rules.engine import evaluate, requirement_facts
+from nyaya.rules.engine import CoverageReport, evaluate, requirement_facts
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -83,7 +95,10 @@ async def list_projects(session: AsyncSession = Depends(db_session)):
     rows = (
         await session.execute(
             select(Project, func.count(Requirement.id))
-            .outerjoin(Requirement, Requirement.project_id == Project.id)
+            .outerjoin(Requirement, and_(
+                Requirement.project_id == Project.id,
+                Requirement.approval_status != ApprovalStatus.SUPERSEDED,
+            ))
             .group_by(Project.id)
             .order_by(Project.created_at.desc())
         )
@@ -129,8 +144,12 @@ async def list_requirements(
             .options(
                 selectinload(Requirement.defects),
                 selectinload(Requirement.evidence),
+                selectinload(Requirement.source_utterance),
             )
-            .where(Requirement.project_id == project_id)
+            .where(
+                Requirement.project_id == project_id,
+                Requirement.approval_status != ApprovalStatus.SUPERSEDED,
+            )
             .order_by(Requirement.ref)
         )
     ).scalars().all()
@@ -141,6 +160,9 @@ async def list_requirements(
             categories=r.categories, priority=r.priority, risk_level=r.risk_level,
             approval_status=str(r.approval_status), confidence=r.confidence,
             acceptance_criteria=r.acceptance_criteria,
+            assumptions=r.assumptions,
+            rationale=r.business_justification or "",
+            quoted_source=(r.source_utterance.masked_text or "") if r.source_utterance else "",
             defects=[
                 DefectOut(
                     defect_type=str(d.defect_type), severity=str(d.severity),
@@ -172,12 +194,15 @@ async def update_requirement(
 
     Marks downstream SDLC and artefacts stale, and records a human_edit audit event.
     """
+    await session.get(Project, project_id, with_for_update=True)
     req = (
         await session.execute(
             select(Requirement)
             .options(
                 selectinload(Requirement.defects),
                 selectinload(Requirement.evidence),
+                selectinload(Requirement.control_mappings),
+                selectinload(Requirement.source_utterance),
             )
             .where(
                 Requirement.id == requirement_id,
@@ -188,28 +213,57 @@ async def update_requirement(
 
     if req is None:
         raise HTTPException(404, "requirement not found")
+    if req.approval_status == ApprovalStatus.SUPERSEDED:
+        raise HTTPException(409, "This requirement has been superseded.")
 
-    changes: dict[str, Any] = {}
-    if payload.statement is not None:
-        req.statement = payload.statement
-        changes["statement"] = payload.statement
-    if payload.priority is not None:
-        req.priority = payload.priority
-        changes["priority"] = payload.priority.value
-    if payload.risk_level is not None:
-        req.risk_level = payload.risk_level
-        changes["risk_level"] = payload.risk_level.value
-    if payload.categories is not None:
-        req.categories = [c.value for c in payload.categories]
-        changes["categories"] = req.categories
-    if payload.acceptance_criteria is not None:
-        req.acceptance_criteria = payload.acceptance_criteria
-        changes["acceptance_criteria"] = payload.acceptance_criteria
-    if payload.business_justification is not None:
-        req.business_justification = payload.business_justification
-        changes["business_justification"] = payload.business_justification
+    changes = payload.model_dump(exclude_none=True)
+    for key in ("statement", "business_justification"):
+        if key in changes:
+            changes[key] = redact_intake(changes[key])
+    if "acceptance_criteria" in changes:
+        changes["acceptance_criteria"] = [redact_intake(text) for text in changes["acceptance_criteria"]]
+    changes = {key: value for key, value in changes.items() if value != getattr(req, key)}
+    if changes:
+        if req.approval_status == ApprovalStatus.APPROVED:
+            previous = req
+            previous.approval_status = ApprovalStatus.SUPERSEDED
+            req = Requirement(
+                project_id=project_id, ref=previous.ref, version=previous.version + 1,
+                supersedes_id=previous.id, source_utterance=previous.source_utterance,
+                source_stakeholder_id=previous.source_stakeholder_id,
+                statement=previous.statement, priority=previous.priority,
+                risk_level=previous.risk_level, categories=list(previous.categories),
+                acceptance_criteria=list(previous.acceptance_criteria),
+                business_justification=previous.business_justification,
+                assumptions=list(previous.assumptions), generated_by=previous.generated_by,
+                approval_status=ApprovalStatus.DRAFT, evidence=[], control_mappings=[],
+            )
+            session.add(req)
+        for key, value in changes.items():
+            setattr(req, key, value)
+        req.approval_status = ApprovalStatus.DRAFT
+        req.confidence = None
+        req.confidence_components = {}
+        req.evidence.clear()
+        req.control_mappings.clear()
+        if req.id is not None:
+            await session.execute(delete(TraceLink).where(
+                TraceLink.source_kind == "requirement", TraceLink.source_id == req.id,
+                TraceLink.target_kind == "clause",
+            ))
+        source = req.source_utterance
+        defects, _ = inspect(ExtractedRequirement(
+            statement=req.statement, rationale=req.business_justification or "",
+            categories=req.categories, priority=req.priority, risk_level=req.risk_level,
+            acceptance_criteria=req.acceptance_criteria, assumptions=req.assumptions,
+            quoted_source=(source.masked_text or "") if source else "",
+        ))
+        req.defects = [Defect(
+            defect_type=d.defect_type, severity=d.severity, detail=d.detail,
+            detector=d.detector, span_start=d.span_start, span_end=d.span_end,
+        ) for d in defects]
+        req.updated_at = datetime.now(UTC)
 
-    req.updated_at = datetime.now(UTC)
     await session.flush()
 
     from nyaya.core import ledger
@@ -238,6 +292,9 @@ async def update_requirement(
         approval_status=str(req.approval_status),
         confidence=req.confidence,
         acceptance_criteria=req.acceptance_criteria,
+        assumptions=req.assumptions,
+        rationale=req.business_justification or "",
+        quoted_source=(req.source_utterance.masked_text or "") if req.source_utterance else "",
         defects=[
             DefectOut(
                 defect_type=str(d.defect_type),
@@ -268,7 +325,10 @@ async def get_project(project_id: uuid.UUID, session: AsyncSession = Depends(db_
         raise HTTPException(404, "project not found")
     count = (
         await session.execute(
-            select(func.count(Requirement.id)).where(Requirement.project_id == project_id)
+            select(func.count(Requirement.id)).where(
+                Requirement.project_id == project_id,
+                Requirement.approval_status != ApprovalStatus.SUPERSEDED,
+            )
         )
     ).scalar_one()
     return ProjectOut(
@@ -276,6 +336,7 @@ async def get_project(project_id: uuid.UUID, session: AsyncSession = Depends(db_
         domain=project.domain, jurisdictions=project.jurisdictions,
         status=project.status, created_at=project.created_at,
         requirement_count=count,
+        open_questions=await project_open_questions(session, project_id),
     )
 
 
@@ -483,9 +544,26 @@ async def get_project_sdlc(project_id: uuid.UUID, session: AsyncSession = Depend
     if not assessment:
         return await generate_project_sdlc(project_id=project_id, session=session)
 
+    max_updated = await session.scalar(
+        select(func.max(Requirement.updated_at)).where(Requirement.project_id == project_id)
+    )
+    is_stale = bool(max_updated and max_updated > assessment.created_at)
+    snapshot = await session.scalar(
+        select(AuditEvent.payload).where(
+            AuditEvent.project_id == project_id,
+            AuditEvent.event_type == "sdlc_assessment",
+            AuditEvent.subject_id == assessment.id,
+        )
+    )
+    if snapshot is not None:
+        return SDLCFromBriefOut.model_validate({**snapshot, "is_stale": is_stale})
+
     count = (
         await session.execute(
-            select(func.count(Requirement.id)).where(Requirement.project_id == project_id)
+            select(func.count(Requirement.id)).where(
+                Requirement.project_id == project_id,
+                Requirement.approval_status != ApprovalStatus.SUPERSEDED,
+            )
         )
     ).scalar_one()
 
@@ -518,7 +596,7 @@ async def get_project_sdlc(project_id: uuid.UUID, session: AsyncSession = Depend
 
     workflow = WorkflowOut(
         model=wf.model.value,
-        cadence="iterative",
+        cadence=CADENCE[wf.model],
         phases=[
             PhaseOut(
                 name=p.get("name", ""),
@@ -534,17 +612,9 @@ async def get_project_sdlc(project_id: uuid.UUID, session: AsyncSession = Depend
             )
             for p in wf.phases
         ],
-        traceability=[],
+        traceability=TRACEABILITY,
         notes=[],
     )
-
-    max_updated = (
-        await session.execute(
-            select(func.max(Requirement.updated_at)).where(Requirement.project_id == project_id)
-        )
-    ).scalar_one_or_none()
-
-    is_stale = bool(max_updated and assessment.created_at and max_updated > assessment.created_at)
 
     return SDLCFromBriefOut(
         project_id=project_id,
@@ -553,7 +623,7 @@ async def get_project_sdlc(project_id: uuid.UUID, session: AsyncSession = Depend
         factors=assessment.factors,
         observations=[],
         requirements_extracted=count,
-        unclear=[],
+        unclear=await project_open_questions(session, project_id),
         is_stale=is_stale,
     )
 
@@ -596,6 +666,11 @@ class _FakeAnalysed:
     requirement: _FakeExtracted
     defects: list[_FakeDefect] = field(default_factory=list)
     ears_pattern: str = "none"
+    ref: str = ""
+    citations: list[str] = field(default_factory=list)
+    controls: list[str] = field(default_factory=list)
+    approval_status: str = "draft"
+    confidence: float | None = None
 
     @property
     def is_testable(self) -> bool:
@@ -627,11 +702,17 @@ def _db_to_analysed(rows: list[Requirement]) -> list[_FakeAnalysed]:
                 risk_level=r.risk_level,
                 acceptance_criteria=r.acceptance_criteria or [],
                 assumptions=r.assumptions or [],
+                quoted_source=(r.source_utterance.masked_text or "") if r.source_utterance else "",
             ),
             defects=[
                 _FakeDefect(detail=d.detail, defect_type=str(d.defect_type), severity=str(d.severity))
                 for d in db_defects
             ],
+            ref=r.ref,
+            citations=sorted({e.cited_key for e in r.evidence if e.resolved and e.relation is EvidenceRelation.SUPPORTS}),
+            controls=sorted({m.control_id for m in r.control_mappings if m.validator_passed}),
+            approval_status=str(r.approval_status),
+            confidence=r.confidence,
         ))
     return items
 
@@ -649,8 +730,14 @@ async def _load_requirements(
     rows = (
         await session.execute(
             select(Requirement)
-            .options(selectinload(Requirement.defects))
-            .where(Requirement.project_id == project_id)
+            .options(
+                selectinload(Requirement.defects), selectinload(Requirement.source_utterance),
+                selectinload(Requirement.evidence), selectinload(Requirement.control_mappings),
+            )
+            .where(
+                Requirement.project_id == project_id,
+                Requirement.approval_status != ApprovalStatus.SUPERSEDED,
+            )
             .order_by(Requirement.ref)
         )
     ).scalars().all()
@@ -679,7 +766,10 @@ async def generate_project_artefacts(
         raise HTTPException(404, "project not found")
     rows = await _load_requirements(session, project_id)
     items = _db_to_analysed(rows)
-    artefacts = build_artefacts(items, project=project.name or project.domain)
+    artefacts = build_artefacts(
+        items, project=project.name or project.domain,
+        unclear=await project_open_questions(session, project_id),
+    )
     return ArtefactsOut(
         project=artefacts.project,
         generated_at=artefacts.generated_at,
@@ -737,7 +827,8 @@ async def generate_project_sdlc(
     items = _db_to_analysed(rows)
 
     # Derive SDLC factors from persisted requirements + brief text
-    derivation = derive(items, unclear=[], brief=project.description)
+    questions = await project_open_questions(session, project_id)
+    derivation = derive(items, unclear=questions, brief=project.description)
     ranking = recommend(derivation.factors)
     critical = sum(
         1 for item in items
@@ -746,7 +837,9 @@ async def generate_project_sdlc(
     workflow = generate_workflow(
         ranking.recommended,
         critical_requirements=critical,
-        open_questions=0,
+        open_questions=len(questions),
+        legacy_integration=derivation.factors["legacy_dependence"] >= 0.8,
+        blocking_gaps=sum(len(report.blocking_gaps) for report in _coverage_reports(project, rows)),
     )
 
     # Persist the assessment
@@ -783,7 +876,7 @@ async def generate_project_sdlc(
     session.add(wf)
     await session.flush()
 
-    return SDLCFromBriefOut(
+    response = SDLCFromBriefOut(
         project_id=project.id,
         recommendation=SDLCOut(
             recommended=ranking.recommended.value,
@@ -824,8 +917,31 @@ async def generate_project_sdlc(
         factors=derivation.factors,
         observations=derivation.observations,
         requirements_extracted=len(rows),
-        unclear=[],
+        unclear=questions,
         is_stale=False,
+    )
+    await record_sdlc_snapshot(session, assessment, response)
+    return response
+
+
+def _coverage_reports(project: Project, rows: list[Requirement]) -> list[CoverageReport]:
+    facts = [
+        (
+            r.ref,
+            requirement_facts(
+                statement=r.statement,
+                categories=r.categories or [],
+                risk_level=str(r.risk_level),
+                jurisdictions=project.jurisdictions or ["IN"],
+                domain=project.domain or "ekyc_onboarding",
+            ),
+        )
+        for r in rows
+    ]
+    return evaluate(
+        facts,
+        domain=project.domain or "ekyc_onboarding",
+        jurisdictions=project.jurisdictions or ["IN"],
     )
 
 
@@ -833,35 +949,12 @@ async def generate_project_sdlc(
 async def generate_project_coverage(
     project_id: uuid.UUID, session: AsyncSession = Depends(db_session)
 ):
-    """Evaluate compliance coverage from persisted requirements — no LLM call.
-
-    Loads the requirements from the database and runs the deterministic
-    rule engine to find which mandatory controls are covered and which
-    are gaps. Instant.
-    """
+    """Evaluate mandatory controls against the project's saved requirements."""
     project = await session.get(Project, project_id)
     if project is None:
         raise HTTPException(404, "project not found")
     rows = await _load_requirements(session, project_id)
-
-    facts = [
-        (
-            r.ref,
-            requirement_facts(
-                statement=r.statement,
-                categories=r.categories or [],
-                risk_level=r.risk_level.value if hasattr(r.risk_level, 'value') else str(r.risk_level),
-                jurisdictions=project.jurisdictions or ["IN"],
-                domain=project.domain or "ekyc_onboarding",
-            ),
-        )
-        for r in rows
-    ]
-    reports = evaluate(
-        facts,
-        domain=project.domain or "ekyc_onboarding",
-        jurisdictions=project.jurisdictions or ["IN"],
-    )
+    reports = _coverage_reports(project, rows)
     return [
         CoverageOut(
             pack=r.pack, pack_version=r.pack_version,
@@ -882,7 +975,7 @@ async def generate_project_coverage(
 
 @router.get("/workflow/gates", response_model=list[GateSpecOut])
 async def list_workflow_gates():
-    """List all 6 mandatory human-in-the-loop approval gates and required roles."""
+    """List the available approval gates and their reviewer roles."""
     return [
         GateSpecOut(
             name=gate.name,
@@ -899,39 +992,42 @@ async def start_project_workflow(
     project_id: uuid.UUID,
     payload: WorkflowStartIn | None = None,
     session: AsyncSession = Depends(db_session),
+    runner: WorkflowRunner = Depends(workflow_runner),
 ):
     """Start or re-run the full LangGraph 5-stage verification workflow for a project.
 
     Reuses existing persisted requirements if already extracted, running the
     multi-agent workflow through human approval gates durably.
     """
-    project = await session.get(Project, project_id)
+    project = await session.get(Project, project_id, with_for_update=True)
     if project is None:
         raise HTTPException(404, "project not found")
 
     body = payload or WorkflowStartIn()
-    runner = get_workflow_runner()
-    return await runner.start(
-        session=session,
-        project_id=project_id,
-        source_text=body.source_text,
-        domain=body.domain or project.domain,
-        jurisdictions=body.jurisdictions or project.jurisdictions,
-        stakeholder_role=body.stakeholder_role,
-    )
+    try:
+        return await runner.start(
+            session=session,
+            project_id=project_id,
+            source_text=body.source_text or project.description,
+            domain=body.domain or project.domain,
+            jurisdictions=body.jurisdictions or project.jurisdictions,
+            stakeholder_role=body.stakeholder_role,
+        )
+    except WorkflowConflictError as e:
+        raise HTTPException(409, str(e)) from e
 
 
 @router.get("/{project_id}/workflow/status", response_model=WorkflowStatusOut)
 async def get_project_workflow_status(
     project_id: uuid.UUID,
     session: AsyncSession = Depends(db_session),
+    runner: WorkflowRunner = Depends(workflow_runner),
 ):
     """Query current execution state and active approval interrupts."""
-    project = await session.get(Project, project_id)
+    project = await session.get(Project, project_id, with_for_update=True)
     if project is None:
         raise HTTPException(404, "project not found")
 
-    runner = get_workflow_runner()
     return await runner.get_status(session, project_id)
 
 
@@ -940,13 +1036,14 @@ async def decide_project_workflow_gate(
     project_id: uuid.UUID,
     decision_in: GateDecisionIn,
     session: AsyncSession = Depends(db_session),
+    runner: WorkflowRunner = Depends(workflow_runner),
 ):
     """Submit a human approval or rejection to clear an active gate interrupt.
 
     Enforces role competence. Unauthorized roles are rejected with 403 Forbidden.
     Resumes durable LangGraph execution.
     """
-    project = await session.get(Project, project_id)
+    project = await session.get(Project, project_id, with_for_update=True)
     if project is None:
         raise HTTPException(404, "project not found")
 
@@ -958,7 +1055,6 @@ async def decide_project_workflow_gate(
             f"Invalid stakeholder role '{decision_in.role}'. Allowed: {[r.value for r in StakeholderRole]}",
         ) from None
 
-    runner = get_workflow_runner()
     try:
         return await runner.decide(
             session=session,
@@ -968,9 +1064,12 @@ async def decide_project_workflow_gate(
             actor=decision_in.actor,
             role=role,
             comment=decision_in.comment,
+            expected_run_id=decision_in.run_id,
         )
     except UnauthorisedApproverError as e:
         raise HTTPException(403, str(e)) from e
+    except WorkflowConflictError as e:
+        raise HTTPException(409, str(e)) from e
     except KeyError as e:
         raise HTTPException(400, str(e)) from e
 

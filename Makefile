@@ -1,4 +1,4 @@
-.PHONY: help setup hooks up down db-reset corpus seed doctor test lint fmt scan check api web
+.PHONY: help setup hooks up down db-init db-reset corpus seed doctor test lint fmt scan check api web
 
 help:
 	@grep -E '^[a-z-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n",$$1,$$2}'
@@ -16,6 +16,9 @@ up: ## Start Postgres and MinIO
 
 down: ## Stop containers
 	docker compose down
+
+db-init: ## Create missing tables without dropping existing data
+	uv run python scripts/reset_db.py --init-only
 
 db-reset: ## Drop and recreate the schema (destroys all data)
 	uv run python scripts/reset_db.py
@@ -40,7 +43,7 @@ doctor: ## Check that everything the app needs is actually up
 	@uv run python scripts/doctor.py
 
 api: ## Run the API on :8000
-	uv run uvicorn nyaya.api.app:app --reload --port 8000
+	uv run uvicorn nyaya.api.app:app --reload --port 8000 --timeout-graceful-shutdown 10
 
 web: ## Run the frontend on :3000 (needs `make api` in another shell)
 	cd web && npm run dev

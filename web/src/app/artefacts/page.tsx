@@ -13,7 +13,7 @@
  * selected from the database or history panel.
  */
 
-import dynamic from "next/dynamic";
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { Copy, Check, FileText, Sparkles, RefreshCw } from "lucide-react";
 import { Block, ModuleShell, Rationale } from "@/components/chrome/ModuleShell";
@@ -21,11 +21,6 @@ import { ProjectSelector } from "@/components/chrome/ProjectSelector";
 import { useJob } from "@/components/chrome/Jobs";
 import { Badge, Button, Empty, Failure, Ring } from "@/components/ui";
 import { api, type Artefacts } from "@/lib/api";
-
-const RequirementLayer = dynamic(
-  () => import("@/components/scenes/RequirementLayer"),
-  { ssr: false },
-);
 
 const RISK_TONE: Record<string, string> = {
   low: "var(--text-tertiary)",
@@ -109,7 +104,12 @@ export default function ArtefactsPage() {
     if (!customText.trim()) return;
     await runJob(
       customText,
-      () => api.artefacts(customText),
+      async () => {
+        const artefacts = await api.artefacts(customText);
+        setProjectArtefacts(null);
+        setSelectedProjectId(null);
+        return artefacts;
+      },
       (next) => ({
         label: `${next.traceability.length} requirements`,
         detail: `${Math.round(next.traceability_coverage * 100)}% fully traced`,
@@ -122,6 +122,9 @@ export default function ArtefactsPage() {
   const result: Artefacts | null = projectArtefacts ?? job.result ?? null;
   const busy = projectLoading || job.state === "running";
   const error = projectError ?? job.error ?? null;
+  const traceRows = result?.traceability ?? [];
+  const citedCount = traceRows.filter((row) => row.citations.length > 0).length;
+  const testableSourceCount = traceRows.filter((row) => row.source_quote && row.verification.length).length;
 
   // Copy full SRS markdown export
   const copySrsMarkdown = () => {
@@ -134,7 +137,7 @@ export default function ArtefactsPage() {
       ``,
       `## 1. Traceability Matrix`,
       ...result.traceability.map(
-        (r) => `- **[${r.ref}]** ${r.statement}\n  - Citations: ${r.citations.join(", ") || "None"}\n  - Controls: ${r.controls.join(", ") || "None"}\n  - Gaps: ${r.gaps.join(", ") || "None"}`
+        (r) => `- **[${r.ref}]** ${r.statement}\n  - Source: ${r.source_quote || "None"}\n  - Verification: ${r.verification.join("; ") || "None"}\n  - Citations: ${r.citations.join(", ") || "None"}\n  - Controls: ${r.controls.join(", ") || "None"}\n  - Gaps: ${r.gaps.join(", ") || "None"}`
       ),
       ``,
       `## 2. User Stories & Acceptance Criteria`,
@@ -163,9 +166,7 @@ export default function ArtefactsPage() {
       pathname="/artefacts"
       eyebrow="SRS & Handover Artefacts"
       title="Software Requirements Specification (SRS)"
-      lede="The formal engineering handover pack: Traceability Matrix, User Stories with Acceptance Criteria, Use Cases with Exception Flows, and Risk Register — deterministically derived from verified project requirements."
-      scene={<RequirementLayer requirements={null} />}
-      sceneCaption="These four artefacts represent the completed Software Requirements Specification (SRS) handover pack. Everything is cross-linked directly to statutory citations and testable criteria."
+      lede="Review the traceability matrix, user stories, use cases, and risk register generated from your requirements."
     >
       {/* Unified Project Selector Bar */}
       <Block>
@@ -249,10 +250,16 @@ export default function ArtefactsPage() {
                 }
               />
               <div style={{ maxWidth: 540 }}>
-                <div className="headline">Traceability Coverage Ratio</div>
+                <div className="headline">{traceRows.filter((row) => row.gaps.length === 0).length} of {traceRows.length} requirements fully linked</div>
                 <p className="caption mt-1 mb-0">
-                  The share of requirements with complete end-to-end traceability (Statutory Citation &rarr; Control Mapping &rarr; Specification &rarr; Verification Criteria).
+                  A complete row has a stakeholder quote, a verified citation, a control mapping, and acceptance criteria.
                 </p>
+                <p className="caption mt-2 mb-0">{testableSourceCount} have a source quote and acceptance criteria. {citedCount} have verified citations.</p>
+                {traceRows.length > 0 && citedCount === 0 && (
+                  <p className="caption mt-2 mb-0">
+                    {projectArtefacts ? <>Complete the project&rsquo;s <Link href="/workflow">Workflow</Link> review to save supported citations and control mappings.</> : "Save the brief as a project in Requirements to run the compliance review and link citations."}
+                  </p>
+                )}
               </div>
             </div>
           </Block>

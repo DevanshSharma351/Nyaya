@@ -96,6 +96,7 @@ class StakeholderRole(StrEnum):
     CUSTOMER = "customer"
     BUSINESS_ANALYST = "business_analyst"
     PRODUCT_OWNER = "product_owner"
+    PROJECT_MANAGER = "project_manager"
     ARCHITECT = "architect"
     DEVELOPER = "developer"
     SECURITY = "security"

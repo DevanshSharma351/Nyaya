@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import secrets
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -213,6 +214,11 @@ def unmask(text: str, mapping: dict[str, str]) -> str:
     for token, value in mapping.items():
         text = text.replace(token, value)
     return text
+
+
+def redact_intake(text: str) -> str:
+    """Mask recognized identifiers with tokens scoped to this submission."""
+    return mask(text, salt=secrets.token_hex(16)).text
 
 
 @lru_cache(maxsize=1)

@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from nyaya.ingestion import flatten, parse, split_clauses
 from nyaya.rules import RuleError, evaluate, load_pack, requirement_facts
 from nyaya.rules.dsl import Condition
 
@@ -26,8 +27,16 @@ def test_every_control_cites_an_authority():
     """A control that cannot be traced to a source is an assertion, not an
     obligation. Enforcing one would be the unfounded claim this system exists
     to prevent."""
+    sources = set()
+    for path in Path("knowledge_base/corpus").glob("*.txt"):
+        clauses = flatten(split_clauses(parse(path), short_code=path.stem))
+        keys = {clause.citation_key for clause in clauses}
+        assert len(keys) == len(clauses)
+        assert all(clause.text.strip() for clause in clauses)
+        sources.update(keys)
     for control in load_pack(PACK).controls:
         assert control.citations, f"{control.control_id} has no citation"
+        assert set(control.citations) <= sources, control.control_id
 
 
 def test_control_ids_are_unique():
@@ -130,21 +139,56 @@ def test_gap_analysis_identifies_uncovered_controls():
 
 def test_full_coverage_leaves_no_gaps():
     """Coverage must reach 1.0 when every control is addressed."""
-    pack = load_pack(PACK)
+    statements = [
+        "Verify the applicant identity with an independent document before opening the account.",
+        "Identify the beneficial owner and verify their identity.",
+        "Record the purpose and intended nature of the relationship.",
+        "Screen applicants against sanctions lists before activation.",
+        "Re-screen customers whenever the lists change.",
+        "Assign and periodically review the customer risk category.",
+        "Do not disclose the risk category to the customer.",
+        "Require senior management approval for politically exposed persons.",
+        "Run liveness detection in each video identification session.",
+        "Record every video session with a timestamp.",
+        "Capture geolocation coordinates and restrict sessions to a domestic IP address.",
+        "Obtain explicit consent before electronic verification.",
+        "Let customers withdraw consent as easily as they gave it.",
+        "Retain identification records after the relationship ends.",
+        "Restrict access to identity records and log each access.",
+        "Encrypt customer information in transit over public networks.",
+        "Preserve an audit trail of electronic verification.",
+        "Do not inform the customer that a suspicious transaction report was filed.",
+        "Notify the board and affected customers of a data breach.",
+        "Collect only personal data necessary for the stated purpose.",
+        "Erase personal data after consent is withdrawn unless a retention obligation applies.",
+    ]
     reqs = [
         (
             f"FR-{i:03d}",
             requirement_facts(
-                statement=" ".join(c.satisfied_when[0].value.replace("\\b", "").split("|")[0:1])
-                if c.satisfied_when
-                else "",
+                statement=statement,
                 categories=["regulatory", "security", "functional"],
             ),
         )
-        for i, c in enumerate(pack.controls)
+        for i, statement in enumerate(statements)
     ]
     report = evaluate(reqs)[0]
-    assert report.coverage_ratio > 0.8, [g.control_id for g in report.gaps]
+    assert report.coverage_ratio == 1.0, [g.control_id for g in report.gaps]
+
+
+def test_unrelated_keywords_do_not_count_as_kyc_controls():
+    statements = [
+        "The system shall verify the amount and retain the shopping cart.",
+        "The system shall erase temporary files at midnight.",
+        "The system shall show the initial screen without consent.",
+        "The system shall not disclose the email address.",
+        "The system shall encrypt report archives at rest.",
+    ]
+    report = evaluate([
+        (str(index), requirement_facts(statement=statement, categories=["security", "functional"]))
+        for index, statement in enumerate(statements)
+    ])[0]
+    assert report.coverage_ratio == 0.0
 
 
 def test_gap_explanations_name_the_authority():

@@ -25,6 +25,7 @@ from __future__ import annotations
 import re
 import uuid
 from dataclasses import dataclass, field
+from datetime import date
 
 from sqlalchemy import Float, Text, func, select
 from sqlalchemy.dialects.postgresql import TSQUERY
@@ -126,7 +127,7 @@ def _base_select():
     ).join(SourceDocument, Clause.document_id == SourceDocument.id)
 
 
-def _apply_scope(stmt, jurisdictions: list[str] | None, as_of: object | None):
+def _apply_scope(stmt, jurisdictions: list[str] | None, as_of: date | None):
     """Restrict retrieval to applicable, in-force sources.
 
     Retrieving a superseded clause would let the system cite a regulation that
@@ -134,14 +135,7 @@ def _apply_scope(stmt, jurisdictions: list[str] | None, as_of: object | None):
     """
     if jurisdictions:
         stmt = stmt.where(SourceDocument.jurisdiction.in_(jurisdictions))
-    stmt = stmt.where(SourceDocument.is_authoritative.is_(True))
-    if as_of is not None:
-        stmt = stmt.where(
-            (SourceDocument.effective_from.is_(None)) | (SourceDocument.effective_from <= as_of)
-        ).where((SourceDocument.effective_to.is_(None)) | (SourceDocument.effective_to > as_of))
-    else:
-        stmt = stmt.where(SourceDocument.effective_to.is_(None))
-    return stmt
+    return stmt.where(SourceDocument.is_authoritative.is_(True), SourceDocument.effective_on(as_of))
 
 
 async def dense_search(
@@ -150,7 +144,7 @@ async def dense_search(
     *,
     limit: int = 40,
     jurisdictions: list[str] | None = None,
-    as_of: object | None = None,
+    as_of: date | None = None,
 ) -> list[Retrieved]:
     """Nearest neighbours by cosine distance."""
     distance = Clause.embedding.cosine_distance(query_vector).label("distance")
@@ -186,7 +180,7 @@ async def lexical_search(
     *,
     limit: int = 40,
     jurisdictions: list[str] | None = None,
-    as_of: object | None = None,
+    as_of: date | None = None,
 ) -> list[Retrieved]:
     """Full-text search over the generated `search_vector` column.
 
@@ -291,7 +285,7 @@ async def hybrid_search(
     limit: int = 40,
     candidates_per_arm: int | None = None,
     jurisdictions: list[str] | None = None,
-    as_of: object | None = None,
+    as_of: date | None = None,
     fusion_weights: tuple[float, float] | None = None,
 ) -> RetrievalResult:
     """Run both retrievers and fuse them.
@@ -370,13 +364,26 @@ async def load_context(session: AsyncSession, items: list[Retrieved]) -> None:
         by_id[clause_id].ancestors = [c for c in chain if c]
 
 
-async def resolve_citation(session: AsyncSession, citation_key: str) -> Retrieved | None:
+async def resolve_citation(
+    session: AsyncSession,
+    citation_key: str,
+    *,
+    jurisdictions: list[str] | None = None,
+    version: str | None = None,
+) -> Retrieved | None:
     """Look up a clause by its exact citation key.
 
     Used by the deterministic validator: a citation that does not resolve here
     is recorded as unresolvable rather than trusted.
     """
-    stmt = _base_select().where(Clause.citation_key == citation_key).limit(1)
+    stmt = _base_select().where(Clause.citation_key == citation_key)
+    if version is None:
+        stmt = _apply_scope(stmt, jurisdictions, None)
+    else:
+        stmt = stmt.where(SourceDocument.version == version, SourceDocument.is_authoritative.is_(True))
+        if jurisdictions:
+            stmt = stmt.where(SourceDocument.jurisdiction.in_(jurisdictions))
+    stmt = stmt.order_by(SourceDocument.effective_from.desc().nulls_last(), SourceDocument.created_at.desc()).limit(1)
     row = (await session.execute(stmt)).first()
     if row is None:
         return None

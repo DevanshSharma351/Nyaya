@@ -13,8 +13,8 @@ reads from here. Two consequences that matter for auditability:
 
 from __future__ import annotations
 
-import operator
-from typing import Annotated, TypedDict
+import uuid
+from typing import TypedDict
 
 from nyaya.agents.compliance import ComplianceResult
 from nyaya.agents.extraction import AnalysedRequirement
@@ -33,29 +33,25 @@ class GateDecision(TypedDict):
 
 
 class WorkflowState(TypedDict, total=False):
-    """State threaded through the graph.
-
-    `Annotated[..., operator.add]` marks a channel as accumulating rather than
-    replacing, so a node that produces requirements adds to what earlier nodes
-    produced instead of discarding it.
-    """
+    """Snapshot of a single workflow run threaded through the graph."""
 
     # --- inputs ---
     project_id: str
+    run_id: str
     domain: str
     jurisdictions: list[str]
     source_text: str
     stakeholder_role: str | None
 
     # --- accumulated outputs ---
-    requirements: Annotated[list[AnalysedRequirement], operator.add]
-    unclear: Annotated[list[str], operator.add]
-    compliance: Annotated[list[ComplianceResult], operator.add]
+    requirements: list[AnalysedRequirement]
+    unclear: list[str]
+    compliance: list[ComplianceResult]
     coverage: list[CoverageReport]
     sdlc: SDLCRecommendation | None
 
     # --- human decisions, appended never replaced ---
-    decisions: Annotated[list[GateDecision], operator.add]
+    decisions: list[GateDecision]
 
     # --- control ---
     halted: bool
@@ -72,6 +68,7 @@ def initial_state(
 ) -> WorkflowState:
     return WorkflowState(
         project_id=project_id,
+        run_id=str(uuid.uuid4()),
         domain=domain,
         jurisdictions=jurisdictions or ["IN"],
         source_text=source_text,

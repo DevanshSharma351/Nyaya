@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,11 +20,18 @@ router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 @router.post("/search", response_model=list[ClauseOut])
 async def search_clauses(payload: SearchIn, session: AsyncSession = Depends(db_session)):
     """Retrieve the clauses most likely to govern a query."""
-    result = await search(
-        session,
-        payload.query,
-        options=SearchOptions(top_k=payload.top_k, jurisdictions=payload.jurisdictions),
-    )
+    query = payload.query.strip()
+    if not query:
+        raise HTTPException(422, "Enter a search query.")
+    try:
+        async with asyncio.timeout(25):
+            result = await search(
+                session,
+                query,
+                options=SearchOptions(top_k=payload.top_k, jurisdictions=payload.jurisdictions),
+            )
+    except TimeoutError as exc:
+        raise HTTPException(504, "Corpus search timed out. Check Ollama and PostgreSQL, then retry.") from exc
     return [
         ClauseOut(
             citation_key=r.citation_key,
@@ -37,13 +46,15 @@ async def search_clauses(payload: SearchIn, session: AsyncSession = Depends(db_s
 
 
 @router.get("/clause/{citation_key:path}", response_model=ClauseOut)
-async def get_clause(citation_key: str, session: AsyncSession = Depends(db_session)):
+async def get_clause(
+    citation_key: str, version: str | None = None, session: AsyncSession = Depends(db_session),
+):
     """Resolve a citation key to its clause.
 
     404 rather than an empty result: an unresolvable citation is a finding, and
     a client must be able to tell it apart from a clause with no text.
     """
-    clause = await resolve_citation(session, citation_key)
+    clause = await resolve_citation(session, citation_key, version=version)
     if clause is None:
         raise HTTPException(404, f"No clause with citation key {citation_key!r}")
     return ClauseOut(
@@ -77,7 +88,7 @@ async def list_documents(session: AsyncSession = Depends(db_session)):
                 func.count(Clause.id).label("clauses"),
             )
             .outerjoin(Clause, Clause.document_id == SourceDocument.id)
-            .where(SourceDocument.effective_to.is_(None))
+            .where(SourceDocument.effective_on(), SourceDocument.is_authoritative.is_(True))
             .group_by(SourceDocument.id)
             .order_by(SourceDocument.short_code)
         )

@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from nyaya.core.enums import (
     ApprovalStatus,
@@ -31,9 +32,49 @@ from nyaya.core.enums import (
     RiskLevel,
 )
 from nyaya.db import session_scope
-from nyaya.db.models import Clause, Evidence, Project, Requirement, SourceDocument
+from nyaya.db.models import (
+    Clause,
+    ControlMapping,
+    Evidence,
+    Interview,
+    Project,
+    Requirement,
+    SourceDocument,
+    Utterance,
+)
 
 PROJECT = "eKYC onboarding — retail"
+DEMO_GENERATOR = "seed:demo-baseline"
+
+# Synthetic stakeholder quotes and acceptance checks for the historical demo.
+# Each named control uses the same citation as its requirement's evidence.
+DEMO_DETAILS = {
+    "FR-KYC-001": (
+        "Screen remote applicants against the designated-persons list before activating their accounts.",
+        "Given an applicant whose screening is pending, an activation request is denied.",
+        "KYC.SCREEN.SANCTIONS",
+    ),
+    "FR-KYC-002": (
+        "Keep customer identification records for five years after the relationship ends.",
+        "Given a relationship closed four years ago, an authorised reviewer can retrieve the identification record.",
+        "KYC.RECORDS.RETENTION",
+    ),
+    "FR-KYC-003": (
+        "Keep each transaction record for five years from the date of the transaction.",
+        "Given a transaction made four years ago, an authorised reviewer can retrieve its record.",
+        None,
+    ),
+    "FR-KYC-004": (
+        "For a business applicant, identify the beneficial owner and record who owns and controls the business.",
+        "Given a company application with no identified beneficial owner, submission for approval is blocked.",
+        "KYC.CDD.BENEFICIAL-OWNER",
+    ),
+    "FR-KYC-005": (
+        "Assign every customer a low, medium, or high risk category. Keep that category confidential from the customer.",
+        "Given a customer whose category is high, the customer-facing account view omits the category.",
+        "KYC.RISK.NO-DISCLOSURE",
+    ),
+}
 
 # (ref, statement, citation, quoted text, priority, risk)
 BASELINE: list[tuple[str, str, str, str, Priority, RiskLevel]] = [
@@ -88,35 +129,67 @@ BASELINE: list[tuple[str, str, str, str, Priority, RiskLevel]] = [
 
 async def main() -> int:
     async with session_scope() as session:
-        existing = await session.scalar(select(Project).where(Project.name == PROJECT))
-        if existing is not None:
-            print(f"  {PROJECT!r} already present; nothing to do")
-            return 0
+        project = await session.scalar(select(Project).where(Project.name == PROJECT))
+        if project is None:
+            project = Project(name=PROJECT, domain="ekyc_onboarding", jurisdictions=["IN", "EU"])
+            session.add(project)
+            await session.flush()
 
-        project = Project(
-            name=PROJECT,
-            domain="ekyc_onboarding",
-            jurisdictions=["IN", "EU"],
-        )
-        session.add(project)
-        await session.flush()
+        existing = {
+            row.ref: row
+            for row in await session.scalars(
+                select(Requirement)
+                .where(Requirement.project_id == project.id, Requirement.version == 1)
+                .options(
+                    selectinload(Requirement.evidence), selectinload(Requirement.control_mappings)
+                )
+            )
+        }
+        missing_sources = [
+            ref
+            for ref in DEMO_DETAILS
+            if ref not in existing
+            or (
+                existing[ref].generated_by == DEMO_GENERATOR
+                and existing[ref].approval_status == ApprovalStatus.APPROVED
+                and existing[ref].source_utterance_id is None
+            )
+        ]
+        interview = None
+        if missing_sources:
+            interview = Interview(
+                project_id=project.id,
+                title="Synthetic demo brief",
+                channel="brief",
+                status="complete",
+                utterances=[],
+            )
+            session.add(interview)
 
         unresolved: list[str] = []
-        for ref, statement, key, quote, priority, risk in BASELINE:
-            requirement = Requirement(
-                project_id=project.id,
-                ref=ref,
-                statement=statement,
-                categories=["regulatory"],
-                priority=priority,
-                risk_level=risk,
-                approval_status=ApprovalStatus.APPROVED,
-                acceptance_criteria=[],
-                assumptions=[],
-                generated_by="seed:demo-baseline",
-            )
-            session.add(requirement)
-            await session.flush()
+        for index, (ref, statement, key, quote, priority, risk) in enumerate(BASELINE, 1):
+            requirement = existing.get(ref)
+            if requirement is not None and (
+                requirement.generated_by != DEMO_GENERATOR
+                or requirement.approval_status != ApprovalStatus.APPROVED
+                or requirement.statement != statement
+            ):
+                continue
+            if requirement is None:
+                requirement = Requirement(
+                    project_id=project.id,
+                    ref=ref,
+                    statement=statement,
+                    categories=["regulatory"],
+                    priority=priority,
+                    risk_level=risk,
+                    approval_status=ApprovalStatus.APPROVED,
+                    assumptions=[],
+                    generated_by=DEMO_GENERATOR,
+                    evidence=[],
+                    control_mappings=[],
+                )
+                session.add(requirement)
 
             # Resolve the citation rather than trusting it. An unresolvable key
             # means the corpus and this file have diverged, and a demonstration
@@ -136,19 +209,47 @@ async def main() -> int:
                 .order_by(SourceDocument.version)
                 .limit(1)
             )
-            if clause is None:
+            if clause is None or " ".join(quote.split()) not in " ".join(clause.text.split()):
                 unresolved.append(key)
+                continue
 
-            session.add(
-                Evidence(
-                    requirement_id=requirement.id,
-                    clause_id=clause.id if clause else None,
-                    cited_key=key,
-                    quoted_text=quote,
-                    relation=EvidenceRelation.SUPPORTS,
-                    resolved=clause is not None,
+            source, criterion, control_id = DEMO_DETAILS[ref]
+            if not requirement.acceptance_criteria:
+                requirement.acceptance_criteria = [criterion]
+            if interview is not None and ref in missing_sources:
+                utterance = Utterance(
+                    sequence=index, speaker="stakeholder", raw_text=source, masked_text=source
                 )
-            )
+                interview.utterances.append(utterance)
+                requirement.source_utterance = utterance
+            if not any(
+                e.cited_key == key and e.clause_id == clause.id for e in requirement.evidence
+            ):
+                requirement.evidence.append(
+                    Evidence(
+                        clause_id=clause.id,
+                        cited_key=key,
+                        quoted_text=quote,
+                        relation=EvidenceRelation.SUPPORTS,
+                        resolved=True,
+                    )
+                )
+            if control_id and not any(
+                m.control_id == control_id for m in requirement.control_mappings
+            ):
+                requirement.control_mappings.append(
+                    ControlMapping(
+                        control_id=control_id,
+                        clause_id=clause.id,
+                        jurisdiction="IN",
+                        proposed_by="rule",
+                        validator_passed=True,
+                        validator_detail={
+                            "source": "synthetic_demo_baseline",
+                            "quote_verified": True,
+                        },
+                    )
+                )
 
         if unresolved:
             raise SystemExit(
@@ -157,7 +258,7 @@ async def main() -> int:
                 f"not exist: {unresolved}. Run `make corpus` first."
             )
 
-        print(f"  {PROJECT}: {len(BASELINE)} approved requirements, all citations resolved")
+        print(f"  {PROJECT}: synthetic demo baseline ready")
     return 0
 
 

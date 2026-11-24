@@ -96,13 +96,14 @@ def _load(model_name: str) -> Pipeline:
     return pipeline(
         "text-classification",
         model=model_name,
+        local_files_only=True,
         top_k=None,  # return the full label distribution, not just the argmax
     )
 
 
 def available(model_name: str | None = None) -> bool:
     try:
-        _load(model_name or get_settings().nli_model)
+        exclusive(lambda: _load(model_name or get_settings().nli_model))
     except Exception:
         return False
     return True
@@ -170,10 +171,13 @@ def check_sync(
     if normalise:
         hypothesis = to_obligation_claim(hypothesis)
     try:
-        model = _load(model_name or get_settings().nli_model)
         # Serialised: the pipeline is shared and this runs in a worker thread.
         # See nyaya/retrieval/inference.py - concurrent calls segfault on Metal.
-        scores = exclusive(lambda: model({"text": premise, "text_pair": hypothesis}))
+        scores = exclusive(
+            lambda: _load(model_name or get_settings().nli_model)(
+                {"text": premise, "text_pair": hypothesis}
+            )
+        )
     except Exception:
         return UNVERIFIED
 

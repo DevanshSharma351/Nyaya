@@ -147,9 +147,9 @@ def controls_for_requirement(
     """
     found: list[Control] = []
     for pack in load_all(rules_dir):
-        if pack.domain != facts.get("domain"):
+        if pack.domain != facts.get("domain") or pack.jurisdiction not in (*facts.get("jurisdictions", []), "GLOBAL"):
             continue
-        found.extend(c for c in pack.controls if c.satisfied_by(facts))
+        found.extend(c for c in pack.controls if c.applies_to(facts) and c.satisfied_by(facts))
     return found
 
 

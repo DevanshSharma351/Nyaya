@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 
 import httpx
@@ -16,6 +18,7 @@ from nyaya.api.schemas import HealthOut
 from nyaya.config import ModelRole, get_settings
 from nyaya.db import get_engine, get_sessionmaker
 from nyaya.db.models import Clause, SourceDocument
+from nyaya.graph.runner import postgres_workflow_runner
 from nyaya.llm import aclose_all, get_provider
 
 logger = logging.getLogger(__name__)
@@ -33,9 +36,13 @@ is accepted without human review.
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    yield
-    await aclose_all()
-    await get_engine().dispose()
+    async with postgres_workflow_runner() as runner:
+        app.state.workflow_runner = runner
+        try:
+            yield
+        finally:
+            await aclose_all()
+            await get_engine().dispose()
 
 
 def create_app() -> FastAPI:
@@ -108,7 +115,7 @@ def create_app() -> FastAPI:
                         select(func.count(Clause.id))
                         .select_from(Clause)
                         .join(SourceDocument, SourceDocument.id == Clause.document_id)
-                        .where(SourceDocument.effective_to.is_(None))
+                        .where(SourceDocument.effective_on(), SourceDocument.is_authoritative.is_(True))
                     )
                 ).scalar_one()
         except Exception:
@@ -124,8 +131,15 @@ def create_app() -> FastAPI:
         from nyaya.retrieval.nli import available as nli_available
         from nyaya.retrieval.rerank import available as reranker_available
 
-        models["reranker"] = reranker_available()
-        models["nli"] = nli_available()
+        async def check_local_model(available: Callable[[], bool]) -> bool:
+            try:
+                return await asyncio.wait_for(asyncio.to_thread(available), timeout=5.0)
+            except TimeoutError:
+                return False
+
+        models["reranker"], models["nli"] = await asyncio.gather(
+            check_local_model(reranker_available), check_local_model(nli_available)
+        )
 
         healthy = database and any(models.values())
         return HealthOut(
